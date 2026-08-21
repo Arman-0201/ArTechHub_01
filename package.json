@@ -1,0 +1,36 @@
+{
+  "name": "academy-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-ready dynamic IT learning platform (Web Academy).",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run dev --workspace @academy/api",
+    "dev:web": "npm run dev --workspace @academy/web",
+    "build": "npm run build --workspace @academy/types && npm run build --workspace @academy/validation && npm run build --workspace @academy/api && npm run build --workspace @academy/web",
+    "build:packages": "npm run build --workspace @academy/types && npm run build --workspace @academy/validation",
+    "start:api": "npm run start --workspace @academy/api",
+    "start:web": "npm run start --workspace @academy/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspace @academy/api",
+    "db:generate": "npm run db:generate --workspace @academy/api",
+    "db:migrate": "npm run db:migrate --workspace @academy/api",
+    "db:push": "npm run db:push --workspace @academy/api",
+    "db:seed": "npm run db:seed --workspace @academy/api",
+    "db:studio": "npm run db:studio --workspace @academy/api",
+    "db:reset": "npm run db:reset --workspace @academy/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  }
+}

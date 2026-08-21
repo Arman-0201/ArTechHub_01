@@ -1,0 +1,1239 @@
+// ---------------------------------------------------------------------------
+// Academy Platform — PostgreSQL schema
+//
+// Conventions used throughout:
+//   * `cuid()` ids; public URLs use `slug` columns, never ids.
+//   * `sortOrder` integers for every admin-reorderable collection.
+//   * Soft delete (`deletedAt`) only on entities where history matters
+//     (users, courses, products, pages). Everything else uses hard delete or an
+//     explicit archived status — see docs/database.md for the rationale.
+//   * Translatable content lives in `*Translation` side tables keyed by locale,
+//     so adding a language never requires a schema change.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ===========================================================================
+// Identity, roles and permissions
+// ===========================================================================
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  emailVerified Boolean    @default(false)
+  passwordHash  String?
+  name          String
+  headline      String?
+  bio           String?    @db.Text
+  avatarMediaId String?
+  status        UserStatus @default(PENDING)
+  locale        String     @default("en")
+  theme         String     @default("system")
+
+  emailNotifications Boolean @default(true)
+  marketingOptIn     Boolean @default(false)
+
+  lastLoginAt  DateTime?
+  lastActiveAt DateTime?
+  // Invalidates every access token issued before this moment. Bumped on
+  // logout-all, password change and role change so privilege changes take
+  // effect immediately instead of at the next token expiry.
+  tokenVersion Int       @default(0)
+
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  avatar             Media?               @relation("UserAvatar", fields: [avatarMediaId], references: [id], onDelete: SetNull)
+  roles              UserRole[]
+  authProviders      AuthProvider[]
+  refreshTokens      RefreshToken[]
+  verificationTokens VerificationToken[]
+  enrollments        Enrollment[]
+  lessonProgress     LessonProgress[]
+  courseProgress     CourseProgress[]
+  legalAcceptances   UserLegalAcceptance[]
+  auditLogs          AuditLog[]           @relation("AuditActor")
+  instructorProfile  Instructor?
+  blogPosts          BlogPost[]
+  uploadedMedia      Media[]              @relation("MediaUploader")
+  orders             Order[]
+  learningDays       LearningDay[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  // System roles are referenced by code (seeding, admin gate) and cannot be
+  // deleted or re-slugged from the UI.
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  groupKey    String
+  description String?
+  createdAt   DateTime @default(now())
+
+  roles RolePermission[]
+
+  @@index([groupKey])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  assignedAt   DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model AuthProvider {
+  id             String   @id @default(cuid())
+  userId         String
+  provider       String
+  providerUserId String
+  email          String?
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("auth_providers")
+}
+
+model RefreshToken {
+  id String @id @default(cuid())
+
+  userId String
+  // Only the SHA-256 of the token is stored: a database leak alone must not
+  // yield usable session credentials.
+  tokenHash String   @unique
+  // Rotation chain. When a token is used, it is revoked and `replacedById`
+  // points at its successor — a second use of a revoked token means the chain
+  // was stolen, and the whole family is revoked.
+  familyId  String
+  replacedById String?
+
+  userAgent String?
+  ipAddress String?
+
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+enum VerificationPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  EMAIL_CHANGE
+  OTP_LOGIN
+}
+
+model VerificationToken {
+  id        String              @id @default(cuid())
+  userId    String
+  purpose   VerificationPurpose
+  tokenHash String
+  // Six-digit OTP codes are also hashed; `attempts` bounds guessing.
+  attempts  Int                 @default(0)
+  metadata  Json?
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@index([tokenHash])
+  @@index([expiresAt])
+  @@map("verification_tokens")
+}
+
+// ===========================================================================
+// Taxonomy
+// ===========================================================================
+
+model Category {
+  id            String  @id @default(cuid())
+  slug          String  @unique
+  name          String
+  description   String?
+  iconName      String?
+  imageMediaId  String?
+  colorHex      String?
+  parentId      String?
+  sortOrder     Int     @default(0)
+  isActive      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parent       Category?             @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Category[]            @relation("CategoryTree")
+  image        Media?                @relation("CategoryImage", fields: [imageMediaId], references: [id], onDelete: SetNull)
+  courses      Course[]
+  translations CategoryTranslation[]
+  seo          SeoMetadata?          @relation("CategorySeo")
+
+  @@index([parentId, sortOrder])
+  @@index([isActive])
+  @@map("categories")
+}
+
+model CategoryTranslation {
+  id          String  @id @default(cuid())
+  categoryId  String
+  locale      String
+  name        String
+  description String?
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([categoryId, locale])
+  @@map("category_translations")
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  courses   CourseTag[]
+  blogPosts BlogPostTag[]
+
+  @@map("tags")
+}
+
+// ===========================================================================
+// Courses
+// ===========================================================================
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  DISABLED
+}
+
+enum CourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum CourseAccessType {
+  FREE
+  PAID
+  INVITE_ONLY
+  PRIVATE
+}
+
+model Instructor {
+  id           String  @id @default(cuid())
+  slug         String  @unique
+  userId       String? @unique
+  name         String
+  headline     String?
+  bio          String? @db.Text
+  avatarMediaId String?
+  links        Json    @default("[]")
+  isActive     Boolean @default(true)
+  sortOrder    Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  avatar  Media?             @relation("InstructorAvatar", fields: [avatarMediaId], references: [id], onDelete: SetNull)
+  courses CourseInstructor[]
+
+  @@index([isActive, sortOrder])
+  @@map("instructors")
+}
+
+model Course {
+  id               String           @id @default(cuid())
+  slug             String           @unique
+  title            String
+  summary          String?
+  // Structured rich-text document (see packages/types/src/content.ts).
+  description      Json?
+  thumbnailMediaId String?
+  categoryId       String?
+  level            CourseLevel      @default(BEGINNER)
+  accessType       CourseAccessType @default(FREE)
+  status           CourseStatus     @default(DRAFT)
+
+  priceCents Int?
+  currency   String? @db.VarChar(3)
+
+  durationMinutes Int?
+  language        String @default("en")
+
+  learningOutcomes String[] @default([])
+  requirements     String[] @default([])
+
+  isFeatured Boolean @default(false)
+
+  // Denormalised counters kept in sync by the enrollment/lesson services.
+  // Reading them avoids a COUNT on every catalogue card render.
+  lessonCount     Int   @default(0)
+  enrollmentCount Int   @default(0)
+  ratingAverage   Float?
+  ratingCount     Int   @default(0)
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  category     Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  thumbnail    Media?              @relation("CourseThumbnail", fields: [thumbnailMediaId], references: [id], onDelete: SetNull)
+  modules      CourseModule[]
+  instructors  CourseInstructor[]
+  tags         CourseTag[]
+  enrollments  Enrollment[]
+  progress     CourseProgress[]
+  translations CourseTranslation[]
+  seo          SeoMetadata?        @relation("CourseSeo")
+
+  @@index([status, publishedAt])
+  @@index([categoryId, status])
+  @@index([isFeatured, status])
+  @@index([deletedAt])
+  @@map("courses")
+}
+
+model CourseTranslation {
+  id               String   @id @default(cuid())
+  courseId         String
+  locale           String
+  title            String
+  summary          String?
+  description      Json?
+  learningOutcomes String[] @default([])
+  requirements     String[] @default([])
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, locale])
+  @@map("course_translations")
+}
+
+model CourseInstructor {
+  courseId     String
+  instructorId String
+  sortOrder    Int    @default(0)
+
+  course     Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  instructor Instructor @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+
+  @@id([courseId, instructorId])
+  @@index([instructorId])
+  @@map("course_instructors")
+}
+
+model CourseTag {
+  courseId String
+  tagId    String
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([courseId, tagId])
+  @@index([tagId])
+  @@map("course_tags")
+}
+
+model CourseModule {
+  id          String  @id @default(cuid())
+  courseId    String
+  title       String
+  summary     String?
+  sortOrder   Int     @default(0)
+  isPublished Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course       Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons      Lesson[]
+  translations ModuleTranslation[]
+
+  @@index([courseId, sortOrder])
+  @@map("course_modules")
+}
+
+model ModuleTranslation {
+  id       String  @id @default(cuid())
+  moduleId String
+  locale   String
+  title    String
+  summary  String?
+
+  module CourseModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([moduleId, locale])
+  @@map("module_translations")
+}
+
+enum LessonType {
+  ARTICLE
+  VIDEO
+  PDF
+  QUIZ
+  RESOURCE
+}
+
+model Lesson {
+  id       String     @id @default(cuid())
+  moduleId String
+  slug     String
+  title    String
+  summary  String?
+  type     LessonType @default(ARTICLE)
+
+  // Structured rich-text body; null for pure-video lessons.
+  body Json?
+
+  videoUrl             String?
+  videoProvider        String? @db.VarChar(16)
+  videoPosterMediaId   String?
+  videoDurationSeconds Int?
+
+  // Original PDF retained after import so learners can still download it.
+  sourcePdfMediaId String?
+
+  durationMinutes Int?
+  sortOrder       Int     @default(0)
+  isPreview       Boolean @default(false)
+  isPublished     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  module       CourseModule        @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  videoPoster  Media?              @relation("LessonPoster", fields: [videoPosterMediaId], references: [id], onDelete: SetNull)
+  sourcePdf    Media?              @relation("LessonSourcePdf", fields: [sourcePdfMediaId], references: [id], onDelete: SetNull)
+  attachments  LessonAttachment[]
+  progress     LessonProgress[]
+  translations LessonTranslation[]
+
+  @@unique([moduleId, slug])
+  @@index([moduleId, sortOrder])
+  @@map("lessons")
+}
+
+model LessonTranslation {
+  id       String  @id @default(cuid())
+  lessonId String
+  locale   String
+  title    String
+  summary  String?
+  body     Json?
+
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([lessonId, locale])
+  @@map("lesson_translations")
+}
+
+model LessonAttachment {
+  id        String   @id @default(cuid())
+  lessonId  String
+  mediaId   String
+  label     String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  media  Media  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@index([lessonId, sortOrder])
+  @@index([mediaId])
+  @@map("lesson_attachments")
+}
+
+// ===========================================================================
+// Enrollment and progress
+// ===========================================================================
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+model Enrollment {
+  id       String           @id @default(cuid())
+  userId   String
+  courseId String
+  status   EnrollmentStatus @default(ACTIVE)
+  source   String           @default("self")
+
+  enrolledAt  DateTime  @default(now())
+  completedAt DateTime?
+  expiresAt   DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([courseId, status])
+  @@index([userId, status])
+  @@index([enrolledAt])
+  @@map("enrollments")
+}
+
+model LessonProgress {
+  id       String @id @default(cuid())
+  userId   String
+  lessonId String
+  courseId String
+
+  isCompleted         Boolean   @default(false)
+  completedAt         DateTime?
+  lastPositionSeconds Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@index([userId, courseId])
+  @@index([lessonId])
+  @@map("lesson_progress")
+}
+
+/// Aggregated per-course progress. Derived from LessonProgress but persisted so
+/// dashboards and course cards never have to aggregate at read time.
+model CourseProgress {
+  id       String @id @default(cuid())
+  userId   String
+  courseId String
+
+  completedLessons Int       @default(0)
+  totalLessons     Int       @default(0)
+  progressPercent  Int       @default(0)
+  lastLessonId     String?
+  lastAccessedAt   DateTime?
+  completedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([userId, lastAccessedAt])
+  @@map("course_progress")
+}
+
+/// One row per user per day with any learning activity — the cheapest way to
+/// compute streaks without scanning progress history.
+model LearningDay {
+  id             String   @id @default(cuid())
+  userId         String
+  day            DateTime @db.Date
+  minutesLearned Int      @default(0)
+  lessonsDone    Int      @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, day])
+  @@index([userId, day])
+  @@map("learning_days")
+}
+
+// ===========================================================================
+// CMS: pages, sections, menus, footer, blog
+// ===========================================================================
+
+enum PublishStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model Page {
+  id       String        @id @default(cuid())
+  slug     String        @unique
+  title    String
+  status   PublishStatus @default(DRAFT)
+  isEnabled Boolean      @default(true)
+  // System pages back a hardcoded route (home, about). They can be edited and
+  // disabled but never deleted, so the route can always resolve.
+  isSystem Boolean       @default(false)
+  template String        @default("default")
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  sections     PageSection[]
+  translations PageTranslation[]
+  seo          SeoMetadata?      @relation("PageSeo")
+
+  @@index([status, isEnabled])
+  @@map("pages")
+}
+
+model PageTranslation {
+  id     String @id @default(cuid())
+  pageId String
+  locale String
+  title  String
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, locale])
+  @@map("page_translations")
+}
+
+enum SectionType {
+  HERO
+  TEXT
+  RICH_TEXT
+  IMAGE
+  IMAGE_TEXT
+  FEATURE_GRID
+  COURSE_GRID
+  CATEGORY_GRID
+  STATS
+  TESTIMONIALS
+  FAQ
+  CTA
+  CAROUSEL
+  LOGO_CAROUSEL
+  VIDEO
+  NEWSLETTER
+  TEAM
+  INSTRUCTOR_LIST
+  BLOG_GRID
+  HTML
+}
+
+model PageSection {
+  id     String      @id @default(cuid())
+  pageId String
+  type   SectionType
+
+  sortOrder Int     @default(0)
+  isVisible Boolean @default(true)
+
+  /// Layout knobs: background, width, alignment, item limits.
+  settings Json @default("{}")
+  /// Copy and media references rendered by the section component.
+  content  Json @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  page         Page                 @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  translations SectionTranslation[]
+
+  @@index([pageId, sortOrder])
+  @@map("page_sections")
+}
+
+model SectionTranslation {
+  id        String @id @default(cuid())
+  sectionId String
+  locale    String
+  content   Json   @default("{}")
+
+  section PageSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@unique([sectionId, locale])
+  @@map("section_translations")
+}
+
+model Menu {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items MenuItem[]
+
+  @@map("menus")
+}
+
+enum MenuLinkType {
+  INTERNAL
+  EXTERNAL
+  PAGE
+  COURSE
+  CATEGORY
+}
+
+model MenuItem {
+  id       String       @id @default(cuid())
+  menuId   String
+  parentId String?
+  label    String
+  url      String
+  linkType MenuLinkType @default(INTERNAL)
+  target   String       @default("_self") @db.VarChar(8)
+  iconName String?
+
+  sortOrder Int     @default(0)
+  isVisible Boolean @default(true)
+
+  /// Role slugs allowed to see this item; empty means everyone.
+  visibleForRoles   String[] @default([])
+  /// Locale codes this item appears in; empty means all locales.
+  visibleForLocales String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  menu         Menu                  @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  parent       MenuItem?             @relation("MenuTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children     MenuItem[]            @relation("MenuTree")
+  translations MenuItemTranslation[]
+
+  @@index([menuId, parentId, sortOrder])
+  @@map("menu_items")
+}
+
+model MenuItemTranslation {
+  id         String @id @default(cuid())
+  menuItemId String
+  locale     String
+  label      String
+
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@unique([menuItemId, locale])
+  @@map("menu_item_translations")
+}
+
+model FooterGroup {
+  id        String  @id @default(cuid())
+  title     String
+  sortOrder Int     @default(0)
+  isVisible Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  links FooterLink[]
+
+  @@index([sortOrder])
+  @@map("footer_groups")
+}
+
+model FooterLink {
+  id        String  @id @default(cuid())
+  groupId   String
+  label     String
+  url       String
+  target    String  @default("_self") @db.VarChar(8)
+  sortOrder Int     @default(0)
+  isVisible Boolean @default(true)
+
+  group FooterGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId, sortOrder])
+  @@map("footer_links")
+}
+
+model BlogPost {
+  id            String        @id @default(cuid())
+  slug          String        @unique
+  title         String
+  excerpt       String?
+  body          Json?
+  coverMediaId  String?
+  authorId      String?
+  status        PublishStatus @default(DRAFT)
+  readingMinutes Int          @default(1)
+  viewCount     Int           @default(0)
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  cover        Media?                @relation("BlogCover", fields: [coverMediaId], references: [id], onDelete: SetNull)
+  author       User?                 @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  tags         BlogPostTag[]
+  translations BlogPostTranslation[]
+  seo          SeoMetadata?          @relation("BlogSeo")
+
+  @@index([status, publishedAt])
+  @@map("blog_posts")
+}
+
+model BlogPostTranslation {
+  id      String  @id @default(cuid())
+  postId  String
+  locale  String
+  title   String
+  excerpt String?
+  body    Json?
+
+  post BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, locale])
+  @@map("blog_post_translations")
+}
+
+model BlogPostTag {
+  postId String
+  tagId  String
+
+  post BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag  Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@index([tagId])
+  @@map("blog_post_tags")
+}
+
+// ===========================================================================
+// Media
+// ===========================================================================
+
+enum MediaKind {
+  IMAGE
+  VIDEO
+  DOCUMENT
+  AUDIO
+  OTHER
+}
+
+model Media {
+  id           String    @id @default(cuid())
+  kind         MediaKind @default(OTHER)
+  // Server-generated name; the client's original filename is never used as a path.
+  fileName     String
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String    @unique
+  storageDriver String   @default("local")
+  url          String
+  checksum     String?
+  width        Int?
+  height       Int?
+  altText      String?
+  folder       String?
+  uploadedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  uploadedBy        User?              @relation("MediaUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  userAvatars       User[]             @relation("UserAvatar")
+  instructorAvatars Instructor[]       @relation("InstructorAvatar")
+  categoryImages    Category[]         @relation("CategoryImage")
+  courseThumbnails  Course[]           @relation("CourseThumbnail")
+  lessonPosters     Lesson[]           @relation("LessonPoster")
+  lessonPdfs        Lesson[]           @relation("LessonSourcePdf")
+  lessonAttachments LessonAttachment[]
+  blogCovers        BlogPost[]         @relation("BlogCover")
+  productImages     ProductImage[]
+
+  @@index([kind, createdAt])
+  @@index([folder])
+  @@map("media")
+}
+
+// ===========================================================================
+// i18n
+// ===========================================================================
+
+model Language {
+  code         String  @id @db.VarChar(10)
+  name         String
+  nativeName   String
+  direction    String  @default("ltr") @db.VarChar(3)
+  flag         String?
+  isActive     Boolean @default(true)
+  isDefault    Boolean @default(false)
+  sortOrder    Int     @default(0)
+  fallbackCode String? @db.VarChar(10)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  translations Translation[]
+
+  @@index([isActive, sortOrder])
+  @@map("languages")
+}
+
+model Translation {
+  id        String   @id @default(cuid())
+  locale    String   @db.VarChar(10)
+  namespace String   @default("common")
+  key       String
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+
+  language Language @relation(fields: [locale], references: [code], onDelete: Cascade)
+
+  @@unique([locale, namespace, key])
+  @@index([locale, namespace])
+  @@map("translations")
+}
+
+// ===========================================================================
+// SEO
+// ===========================================================================
+
+/// One optional metadata row per SEO-able entity. Exactly one of the foreign
+/// keys is set; each is unique so the relation stays 1:1.
+model SeoMetadata {
+  id String @id @default(cuid())
+
+  pageId     String? @unique
+  courseId   String? @unique
+  categoryId String? @unique
+  blogPostId String? @unique
+  productId  String? @unique
+  /// Non-null for global defaults and for hardcoded routes such as "/courses".
+  routeKey   String? @unique
+
+  title          String?
+  description    String?
+  keywords       String[] @default([])
+  canonicalUrl   String?
+  ogTitle        String?
+  ogDescription  String?
+  ogImageUrl     String?
+  twitterCard    String?
+  robots         String?
+  structuredData Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  page     Page?     @relation("PageSeo", fields: [pageId], references: [id], onDelete: Cascade)
+  course   Course?   @relation("CourseSeo", fields: [courseId], references: [id], onDelete: Cascade)
+  category Category? @relation("CategorySeo", fields: [categoryId], references: [id], onDelete: Cascade)
+  blogPost BlogPost? @relation("BlogSeo", fields: [blogPostId], references: [id], onDelete: Cascade)
+  product  Product?  @relation("ProductSeo", fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("seo_metadata")
+}
+
+// ===========================================================================
+// E-commerce
+// ===========================================================================
+
+enum ProductType {
+  PHYSICAL
+  DIGITAL
+  BUNDLE
+}
+
+enum OrderStatus {
+  PENDING
+  AWAITING_PAYMENT
+  PAID
+  FULFILLED
+  CANCELLED
+  REFUNDED
+}
+
+model ProductCategory {
+  id        String  @id @default(cuid())
+  slug      String  @unique
+  name      String
+  description String?
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@map("product_categories")
+}
+
+model Product {
+  id                  String      @id @default(cuid())
+  slug                String      @unique
+  name                String
+  summary             String?
+  description         Json?
+  type                ProductType @default(PHYSICAL)
+  priceCents          Int
+  compareAtPriceCents Int?
+  currency            String      @default("USD") @db.VarChar(3)
+  stock               Int?
+  isActive            Boolean     @default(false)
+  categoryId          String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  category   ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  images     ProductImage[]
+  orderItems OrderItem[]
+  seo        SeoMetadata?     @relation("ProductSeo")
+
+  @@index([isActive, createdAt])
+  @@index([categoryId])
+  @@map("products")
+}
+
+model ProductImage {
+  id        String @id @default(cuid())
+  productId String
+  mediaId   String
+  sortOrder Int    @default(0)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  media   Media   @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@index([productId, sortOrder])
+  @@index([mediaId])
+  @@map("product_images")
+}
+
+model Order {
+  id        String      @id @default(cuid())
+  reference String      @unique
+  userId    String?
+  status    OrderStatus @default(PENDING)
+
+  customerName  String
+  customerEmail String
+  customerPhone String?
+
+  shippingAddress Json?
+  notes           String?
+
+  subtotalCents Int
+  shippingCents Int    @default(0)
+  taxCents      Int    @default(0)
+  totalCents    Int
+  currency      String @default("USD") @db.VarChar(3)
+
+  /// Provider-agnostic payment envelope; no card data is ever stored here.
+  paymentProvider  String?
+  paymentReference String?
+  paidAt           DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items OrderItem[]
+
+  @@index([userId])
+  @@index([status, createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String @id @default(cuid())
+  orderId   String
+  productId String?
+  // Name and price are snapshotted: an order must remain readable after the
+  // product is renamed, repriced or deleted.
+  name          String
+  unitPriceCents Int
+  quantity      Int
+  totalCents    Int
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+// ===========================================================================
+// Platform: settings, features, legal, audit, misc
+// ===========================================================================
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model FeatureFlag {
+  key         String   @id
+  label       String
+  description String?
+  isEnabled   Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+
+  @@map("feature_flags")
+}
+
+model LegalDocument {
+  id                 String  @id @default(cuid())
+  slug               String  @unique
+  title              String
+  requiresAcceptance Boolean @default(false)
+  sortOrder          Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  versions LegalDocumentVersion[]
+
+  @@map("legal_documents")
+}
+
+model LegalDocumentVersion {
+  id          String   @id @default(cuid())
+  documentId  String
+  version     String
+  body        Json?
+  effectiveAt DateTime @default(now())
+  isCurrent   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  document    LegalDocument         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  acceptances UserLegalAcceptance[]
+
+  @@unique([documentId, version])
+  @@index([documentId, isCurrent])
+  @@map("legal_document_versions")
+}
+
+model UserLegalAcceptance {
+  id         String   @id @default(cuid())
+  userId     String
+  versionId  String
+  acceptedAt DateTime @default(now())
+  ipAddress  String?
+
+  user    User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version LegalDocumentVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, versionId])
+  @@index([versionId])
+  @@map("user_legal_acceptances")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorEmail String?
+  action     String
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([action])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
+}
+
+model NewsletterSubscriber {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  locale         String    @default("en")
+  isConfirmed    Boolean   @default(false)
+  confirmedAt    DateTime?
+  unsubscribedAt DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@map("newsletter_subscribers")
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String   @db.Text
+  isHandled Boolean  @default(false)
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([isHandled, createdAt])
+  @@map("contact_messages")
+}
