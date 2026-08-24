@@ -1,12 +1,44 @@
 /** @type {import('next').NextConfig} */
 
-const apiOrigin = (() => {
-  try {
-    return new URL(process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').origin;
-  } catch {
-    return 'http://localhost:4000';
+/**
+ * `NEXT_PUBLIC_API_URL` is baked into the client bundle *and* into the
+ * `connect-src` directive of the CSP below — both at build time, neither
+ * overridable afterwards. When it is missing from a deployed build the fallback
+ * silently ships `connect-src 'self' http://localhost:4000`, so the browser
+ * blocks every API call: a site that renders but has no data, diagnosable only
+ * from the console. Refuse to produce that artefact.
+ *
+ * Only hosted builds are strict — a local `next build` against a dev API is a
+ * legitimate thing to do.
+ */
+function resolveApiOrigin() {
+  const raw = process.env.NEXT_PUBLIC_API_URL;
+  const isHostedBuild = Boolean(process.env.VERCEL || process.env.CI);
+
+  if (isHostedBuild && process.env.NODE_ENV === 'production') {
+    if (!raw) {
+      throw new Error(
+        'NEXT_PUBLIC_API_URL is not set. Set it in the deployment environment ' +
+          'before building: it is baked into the bundle and into the CSP, so it ' +
+          'cannot be supplied at runtime.',
+      );
+    }
+    if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(raw)) {
+      throw new Error(
+        `NEXT_PUBLIC_API_URL points at a local address (${raw}) in a hosted ` +
+          'production build. Set it to the public origin of the API.',
+      );
+    }
   }
-})();
+
+  try {
+    return new URL(raw ?? 'http://localhost:4000').origin;
+  } catch {
+    throw new Error(`NEXT_PUBLIC_API_URL is not a valid absolute URL: ${raw}`);
+  }
+}
+
+const apiOrigin = resolveApiOrigin();
 
 /**
  * Content Security Policy.

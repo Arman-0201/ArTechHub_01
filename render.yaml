@@ -11,7 +11,10 @@ services:
     branch: main
     rootDir: .
     healthCheckPath: /health
-    buildCommand: npm ci && npm run build:packages && npm run db:generate && npm run build --workspace @academy/api
+    # --include=dev is required: NODE_ENV=production below makes npm default to
+    # omit=dev, which would strip the prisma CLI, typescript and tsx from the
+    # install and leave nothing to build or seed with.
+    buildCommand: npm ci --include=dev && npm run build:packages && npm run db:generate && npm run build --workspace @academy/api
     startCommand: npm run db:deploy --workspace @academy/api && npm run start:api
     envVars:
       - key: NODE_VERSION
@@ -52,8 +55,13 @@ services:
         value: none
       - key: COOKIE_SECURE
         value: "true"
+      # Must be the parent domain shared by the web app and the API, with a
+      # leading dot (e.g. .example.com). Server-side rendering reads the refresh
+      # cookie off the incoming request, so on unrelated hosts
+      # (*.vercel.app + *.onrender.com) the cookie never reaches the Next server
+      # and every authenticated page redirects to the login screen.
       - key: COOKIE_DOMAIN
-        value: ""
+        sync: false
 
       # --- Mail: `console` is rejected in production (config/env.ts)
       - key: MAIL_TRANSPORT

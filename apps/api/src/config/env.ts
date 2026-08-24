@@ -144,6 +144,13 @@ function assertProductionSecrets(parsed: z.infer<typeof envSchema>): void {
   if (parsed.MAIL_TRANSPORT === 'console') {
     problems.push('MAIL_TRANSPORT=console cannot be used in production');
   }
+  // `sendMail` deliberately swallows delivery failures so a bad SMTP hop cannot
+  // turn a successful registration into a 500. That makes a missing host silent:
+  // verification and reset emails would vanish into the log with no signal. Catch
+  // it at boot instead, where it is still cheap to fix.
+  if (parsed.MAIL_TRANSPORT === 'smtp' && !parsed.SMTP_HOST) {
+    problems.push('MAIL_TRANSPORT=smtp requires SMTP_HOST');
+  }
 
   if (problems.length > 0) {
     throw new Error(`Unsafe production configuration:\n  - ${problems.join('\n  - ')}`);
@@ -151,7 +158,14 @@ function assertProductionSecrets(parsed: z.infer<typeof envSchema>): void {
 }
 
 function loadEnv(): AppEnv {
-  const result = envSchema.safeParse(process.env);
+  // Platforms-as-a-service (Render, Fly, Heroku, Cloud Run) inject the port to
+  // bind as `PORT` and route external traffic to it. Honouring it here means a
+  // provider changing that port can never leave the process listening on the
+  // wrong one; an explicit `API_PORT` still wins for local and container runs.
+  const result = envSchema.safeParse({
+    ...process.env,
+    API_PORT: process.env.API_PORT ?? process.env.PORT,
+  });
 
   if (!result.success) {
     const details = result.error.issues

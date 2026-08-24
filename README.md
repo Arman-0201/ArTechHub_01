@@ -13,7 +13,7 @@ packages/
   types/        Shared domain types, permission catalogue, locale catalogue
   validation/   Zod schemas shared by the API and the web forms
   config/       Shared TypeScript configuration presets
-docs/           Architecture, database, security, API and development guides
+docs/           Architecture, database, security, API, development, deployment
 ```
 
 ---
@@ -197,6 +197,7 @@ Production checklist:
 | [Security](docs/security.md)               | Auth model, authorization, uploads, threats and limits      |
 | [API](docs/api.md)                         | Conventions, error envelope, endpoint reference             |
 | [Development](docs/development.md)         | Working on the codebase, conventions, adding features       |
+| [Deployment](docs/deployment.md)           | Hosting topology, order of operations, environment values   |
 
 ---
 
