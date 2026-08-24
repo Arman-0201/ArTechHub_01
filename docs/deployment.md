@@ -107,7 +107,11 @@ Import the repository, then in Settings:
   "No Next.js version detected" — Vercel reads the Next version from the
   package.json in the root directory, and the repository root has no `next`
   dependency. `apps/web/vercel.json` supplies the install and build commands,
-  both of which step up to the workspace root.
+  both of which step up to the workspace root. Leaving Root Directory at the
+  repository root makes Vercel run the root `npm run build`, which also compiles
+  the API; that fails with a wall of `Namespace 'Prisma' has no exported member`
+  errors because Vercel blocks install scripts, so `@prisma/client`'s postinstall
+  never generates the client.
 
 Set the environment variables **before the first build**:
 
