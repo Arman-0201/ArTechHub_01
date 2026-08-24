@@ -24,14 +24,21 @@ services:
       # Render routes external traffic to the port it exposes as PORT (10000).
       - key: API_PORT
         value: "10000"
+      # A hop count, not a flag, and it has to be exact or every rate limit keys
+      # on a proxy's address instead of the visitor's. Two hops here: the web
+      # app proxies the browser's API calls through its own origin, and Render's
+      # balancer sits in front of this service.
       - key: TRUST_PROXY
-        value: "1"
+        value: "2"
 
       # --- URLs (fill after the first deploy / after Vercel gives you a domain)
       - key: API_PUBLIC_URL
         sync: false
       - key: WEB_PUBLIC_URL
         sync: false
+      # Vestigial for the browser, which now calls the API through the web
+      # app's origin, but config/env.ts still requires one entry in production.
+      # Set it to the web origin, with no trailing slash.
       - key: CORS_ORIGINS
         sync: false
 
@@ -50,16 +57,17 @@ services:
       - key: TOKEN_PEPPER_SECRET
         sync: false
 
-      # Frontend and API live on different sites -> cookies must be cross-site.
+      # The browser reaches this API through the web app's own origin (see
+      # apps/web/src/app/api/v1/[...path]/route.ts), so the session cookie is
+      # first-party and `lax` is enough. `none` would also work over HTTPS.
       - key: COOKIE_SAMESITE
-        value: none
+        value: lax
       - key: COOKIE_SECURE
         value: "true"
-      # Must be the parent domain shared by the web app and the API, with a
-      # leading dot (e.g. .example.com). Server-side rendering reads the refresh
-      # cookie off the incoming request, so on unrelated hosts
-      # (*.vercel.app + *.onrender.com) the cookie never reaches the Next server
-      # and every authenticated page redirects to the login screen.
+      # Leave this UNSET unless the web app and the API share a parent domain
+      # (example.com + api.example.com -> .example.com). The proxy strips the
+      # Domain attribute regardless, and a value naming a host the browser is
+      # not on is rejected outright, which drops the session silently.
       - key: COOKIE_DOMAIN
         sync: false
 

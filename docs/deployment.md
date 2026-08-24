@@ -3,18 +3,26 @@
 Target topology: the Next.js app on Vercel, the Express API on Render, PostgreSQL
 on Neon or Supabase, uploads on S3-compatible object storage.
 
-## Why a custom domain is not optional
+## The browser never calls the API directly
 
 Server-side rendering reads the session from the incoming request's cookies and
 forwards them to the API (`apps/web/src/lib/api/server.ts`). The refresh cookie
-is set by the API, on the API's host. So the web app and the API must share a
-parent domain, or the Next server never receives the cookie: `getSessionUser()`
-returns null, and `DashboardLayout` and the admin shell redirect every signed-in
-visitor back to the login screen. Browsers that block third-party cookies
-(Safari, Firefox) additionally break the browser-side refresh.
+is set by the API, on the API's host — so when the two live on unrelated hosts
+the Next server never receives it: `getSessionUser()` returns null, and
+`DashboardLayout` and the admin shell redirect every signed-in visitor back to
+the login screen. Signing in appears to work and the next navigation undoes it.
 
-`*.vercel.app` and `*.onrender.com` share no parent domain, so that pairing
-cannot work. Use one domain with two hosts:
+So the browser talks to `/api/v1/*` on the web app's own origin, and
+`apps/web/src/app/api/v1/[...path]/route.ts` forwards each request to the API,
+rewriting `Set-Cookie` to drop the `Domain` attribute. The cookie binds to the
+web host instead: server rendering sees the same session the browser does, CORS
+never applies (a server-to-server request carries no `Origin`), and the
+third-party cookie blocking in Safari and Firefox stops mattering.
+
+That makes the hostnames the platforms hand out — `*.vercel.app` paired with
+`*.onrender.com` — a working deployment, with one hop of overhead per API call.
+A shared parent domain is still the better topology, and OAuth needs it: the
+provider's callback lands on the API host directly, bypassing the proxy.
 
 | Role | Host |
 | ---- | ---- |
@@ -143,8 +151,9 @@ https://api.example.com/api/v1/auth/oauth/github/callback
 1. `GET /health/ready` returns `{"status":"ready"}`.
 2. The home page renders seeded content and navigation.
 3. No CSP violations in the browser console, and API calls return 200.
-4. Sign in as the owner: `/en/dashboard` renders instead of bouncing to
-   `/login`. This is the check that the cookie domain is right.
+4. Sign in as the owner, then navigate to `/en/dashboard`: it renders instead
+   of bouncing to `/login`. This is the check that the session cookie reached
+   the Next server.
 5. `/en/admin` renders.
 6. Admin → Media → upload a file; it loads from the S3 public URL.
 7. Register a new address; the verification email arrives.

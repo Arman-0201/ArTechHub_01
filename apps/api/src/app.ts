@@ -27,10 +27,10 @@ export function createApp(): Express {
   const app = express();
 
   // Behind a proxy, `req.ip` must come from X-Forwarded-For or every rate limit
-  // would key on the load balancer and apply globally. Only trusted when the
-  // deployment says so — otherwise the header is client-controlled and could be
-  // used to evade limits.
-  app.set('trust proxy', env.TRUST_PROXY ? 1 : false);
+  // would key on the load balancer and apply globally. The count has to match
+  // the deployment exactly: only the hops it names are trusted, so the rest of
+  // the header stays client-controlled and unusable for evading limits.
+  app.set('trust proxy', env.TRUST_PROXY > 0 ? env.TRUST_PROXY : false);
   app.disable('x-powered-by');
 
   app.use(requestContext);

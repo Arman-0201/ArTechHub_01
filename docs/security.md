@@ -301,9 +301,13 @@ and for development. A multi-instance deployment multiplies every limit by the
 instance count — swap in a Redis store (`rate-limit-redis`) in
 `middleware/rate-limit.ts`; the limiter definitions do not change.
 
-`TRUST_PROXY` must be enabled behind a load balancer or every limit keys on the
-balancer's IP and applies globally. It must **not** be enabled otherwise, since
-`X-Forwarded-For` is then client-controlled and can be used to evade limits.
+`TRUST_PROXY` counts the proxies in front of the API, and the count must be
+exact. Too low and every limit keys on a proxy's IP and applies to all visitors
+at once; too high and a client-supplied `X-Forwarded-For` entry is believed,
+which is precisely how an attacker rotates past a limit. It is `0` for a
+directly exposed service, `1` behind a single load balancer, and `2` for the
+deployed topology, where the web app proxies the browser's API calls through its
+own origin before Render's balancer.
 
 ---
 

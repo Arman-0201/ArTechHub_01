@@ -20,6 +20,34 @@ const booleanish = z
     typeof value === 'boolean' ? value : ['1', 'true', 'yes', 'on'].includes(value.toLowerCase()),
   );
 
+/**
+ * How many proxies sit in front of the API, as a count rather than a flag.
+ *
+ * `req.ip` — which every rate limit keys on — is only correct when the number
+ * is exact: too low and each limit keys on a proxy's address and applies to all
+ * visitors at once; too high and a client-supplied `X-Forwarded-For` entry is
+ * believed, letting an attacker rotate past the limits.
+ *
+ * `0` is a directly exposed service. `1` is a single load balancer. Serving
+ * the browser's API calls through the web app's own origin adds one more, so
+ * the Vercel + Render pairing is `2`. Boolean-ish values still parse, with
+ * `true` meaning one hop, so existing deployments keep working.
+ */
+const trustedProxyHops = z
+  .union([z.boolean(), z.number(), z.string()])
+  .default(0)
+  .transform((value) => {
+    if (typeof value === 'boolean') return value ? 1 : 0;
+    if (typeof value === 'number') return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+
+    const normalised = value.trim().toLowerCase();
+    if (['true', 'yes', 'on'].includes(normalised)) return 1;
+    if (['', 'false', 'no', 'off'].includes(normalised)) return 0;
+
+    const hops = Number.parseInt(normalised, 10);
+    return Number.isNaN(hops) ? 0 : Math.max(0, hops);
+  });
+
 const csvList = z
   .string()
   .default('')
@@ -43,7 +71,7 @@ const envSchema = z.object({
   API_PUBLIC_URL: z.string().url().default('http://localhost:4000'),
   WEB_PUBLIC_URL: z.string().url().default('http://localhost:3000'),
   CORS_ORIGINS: csvList,
-  TRUST_PROXY: booleanish.default(false),
+  TRUST_PROXY: trustedProxyHops,
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   DIRECT_URL: z.string().optional(),

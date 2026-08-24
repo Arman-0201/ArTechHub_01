@@ -16,7 +16,16 @@ import { ApiError, buildQueryString, type ApiResult, type RequestOptions } from 
  *     stampeding the endpoint and invalidating each other's rotated tokens.
  */
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/+$/, '');
+/**
+ * Requests go to this app's own origin, never straight to the API.
+ *
+ * `app/api/v1/[...path]/route.ts` forwards them, which is what keeps the
+ * refresh cookie first-party: stored against the web origin, it rides along on
+ * ordinary page requests too, so server rendering sees the same session the
+ * browser does. Calling the API host directly strands the cookie there whenever
+ * the two hosts share no parent domain.
+ */
+const API_BASE = '';
 
 let accessToken: string | null = null;
 let accessTokenExpiresAt = 0;
