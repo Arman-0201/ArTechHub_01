@@ -129,6 +129,21 @@ function assertProductionSecrets(parsed: z.infer<typeof envSchema>): void {
   if (parsed.JWT_ACCESS_SECRET === parsed.JWT_REFRESH_SECRET) {
     problems.push('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must differ');
   }
+  // The failure next.config.mjs already guards on the web side: a public URL
+  // left at its localhost default boots without complaint, then signs every
+  // verification link and OAuth callback with an address only the developer's
+  // own machine can reach.
+  const localAddress = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i;
+  const publicUrls: [string, string][] = [
+    ['API_PUBLIC_URL', parsed.API_PUBLIC_URL],
+    ['WEB_PUBLIC_URL', parsed.WEB_PUBLIC_URL],
+  ];
+  for (const [name, value] of publicUrls) {
+    if (localAddress.test(value)) {
+      problems.push(`${name} points at a local address (${value}); set it to the public origin`);
+    }
+  }
+
   if (!parsed.COOKIE_SECURE) {
     problems.push('COOKIE_SECURE must be enabled in production');
   }
@@ -158,13 +173,24 @@ function assertProductionSecrets(parsed: z.infer<typeof envSchema>): void {
 }
 
 function loadEnv(): AppEnv {
+  // A variable that a platform declares but nobody fills arrives as an empty
+  // string, not as a missing key — Render writes every `sync: false` entry that
+  // way. Zod counts "" as supplied: `.default()` never applies and `.url()`
+  // reports "Invalid url", which reads as a typo in a value that was in fact
+  // left blank. Drop the empties so the message names the real problem, and so
+  // the `??` below still reaches PORT when API_PORT is present but empty.
+  const raw: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && value !== '') raw[key] = value;
+  }
+
   // Platforms-as-a-service (Render, Fly, Heroku, Cloud Run) inject the port to
   // bind as `PORT` and route external traffic to it. Honouring it here means a
   // provider changing that port can never leave the process listening on the
   // wrong one; an explicit `API_PORT` still wins for local and container runs.
   const result = envSchema.safeParse({
-    ...process.env,
-    API_PORT: process.env.API_PORT ?? process.env.PORT,
+    ...raw,
+    API_PORT: raw.API_PORT ?? raw.PORT,
   });
 
   if (!result.success) {
