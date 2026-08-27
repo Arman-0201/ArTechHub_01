@@ -188,28 +188,66 @@ passed down as props.
 
 ---
 
-## Live admin data
+## Live data
 
-The admin panel is a set of screens people leave open while other people change
-the same records. A WebSocket keeps them honest.
+Every tab holds one WebSocket — a visitor reading a marketing page, a learner in
+a lesson, an editor in the panel — and what it receives is decided once, at the
+handshake, by the credential it presented.
 
 ```
-admin edits a course
-  -> admin route handler                 (validates, writes, audits)
-  -> recordAudit()                       (one hook, every module)
-  -> broadcastChange({resources:[...]})  (in-process registry of sockets)
-  -> each admin browser                  (invalidate matching query keys)
-  -> the screens refetch through the normal authorised endpoints
+admin publishes a course
+  -> admin route handler                    (validates, writes, audits)
+  -> recordAudit()                          (one hook, every module)
+  -> broadcastChange({resources:[...]})     -> admin sockets, narrowed by permission
+  -> broadcastPublic(['catalog'])           -> every socket, including anonymous
+  -> each browser re-reads through the endpoint it always used
+
+admin grants an enrollment
+  -> enroll()
+  -> broadcastToUser(learnerId, ['enrollments','progress'])
+  -> that learner's tabs only
 ```
 
-Four decisions carry the design.
+### The three audiences
 
-**The audit trail is the source.** Every deliberate administrative change
-already passes through `recordAudit`, so hooking it there means no module has to
-remember to notify anyone, and an action worth recording is exactly an action
-other admins want to see. `realtime/events.ts` maps the action prefix to the
-screens it moves — `lesson.updated` moves the course list, and every action also
-moves the audit log and the dashboard.
+| Audience  | Who                        | Carries                                   |
+| --------- | -------------------------- | ----------------------------------------- |
+| `public`  | everyone, anonymous included | a channel name and a timestamp — no ids, no actor |
+| `learner` | any signed-in account      | which of *its own* areas moved            |
+| `admin`   | an account with an admin permission | resources, action, target, actor — narrowed per permission |
+
+They are cumulative: a signed-in visitor is `public` + `learner`, an editor adds
+`admin` on top. A socket is never told about an audience it does not hold, which
+is what makes it safe to hand the same endpoint to a stranger.
+
+The public channels are coarse on purpose, and that coarseness is the security
+property. An admin is told "course `abc` was updated by Dana"; a visitor is told
+"the catalogue moved" and goes to look — through the public API, which serves
+published content and nothing else. A draft edited into existence and back out
+again is invisible either way. Actions that reveal only internal activity —
+a role changed, a media file uploaded, an order's status moved — produce no
+public event at all, which is both the privacy answer and the efficient one:
+waking every open page for a change nobody can see is pure waste.
+
+Five decisions carry the design.
+
+**The audit trail is the source — for two of the three.** Every deliberate
+administrative change already passes through `recordAudit`, so hooking it there
+means no module has to remember to notify anyone, and an action worth recording
+is exactly an action others want to see. `realtime/events.ts` maps the action
+prefix twice over: to the admin screens it moves (`lesson.updated` moves the
+course list, and every action also moves the audit log and the dashboard) and to
+the public channel a visitor might be looking at. Deriving both in one place is
+what stops them drifting, or an actor's name being copied into the public one.
+
+**Learner events are announced explicitly.** They cannot come from the audit
+trail, because an audit entry records who *acted* and this needs to know who was
+*affected* — and the two differ in exactly the cases that matter: an
+administrator granting an enrollment, an order clearing. So `enroll()`,
+`updateLessonProgress()` and `updateOrderStatus()` name the learner themselves.
+The same mechanism gives multi-tab consistency for free: completing a lesson in
+one window moves the dashboard in another, because the writer's own tabs hear it
+too.
 
 **Events name, they do not carry.** A change notice says which resources went
 stale; the client refetches through the endpoint it always used. The socket can
@@ -224,16 +262,29 @@ database, not from the token. It then closes when that token expires, so
 revoking a role cannot leave a live feed running until the tab closes.
 
 **The registry is in-process.** With more than one API instance, a change made
-on instance A does not reach an admin connected to instance B, and those screens
-fall back to refetching on navigation as before. Scaling out means publishing
-`broadcastChange` over Redis pub/sub and subscribing on each instance; no call
-site changes. This is the same trade-off the in-memory rate limiter makes.
+on instance A does not reach a client connected to instance B, and those pages
+fall back to refreshing on navigation as before. Scaling out means publishing the
+three broadcast functions over Redis pub/sub and subscribing on each instance; no
+call site changes. This is the same trade-off the in-memory rate limiter makes —
+but it now bounds concurrent *visitors* rather than concurrent administrators,
+which is a much lower ceiling. `REALTIME_PUBLIC_ENABLED=false` is the escape
+hatch: it drops the anonymous half and leaves the public site exactly as it
+behaved before the feed existed. `REALTIME_MAX_ANONYMOUS` caps the rest.
 
-On the browser side, `RealtimeProvider` is mounted by `AdminShell`, so a socket
-exists only while the panel is open. It invalidates TanStack Query keys by
-prefix — the same mechanism `useApiMutation` uses after a write — and calls
-`router.refresh()` at most once every two seconds for the admin screens that are
-Server Components.
+On the browser side, `RealtimeProvider` is mounted once in `Providers`, so one
+socket serves the whole tab — marketing page, dashboard and admin panel alike.
+It invalidates TanStack Query keys by prefix (the same mechanism
+`useApiMutation` uses after a write) and calls `router.refresh()` for the
+screens that are Server Components, which is most of them.
+
+**Refreshes are paced by who is waiting.** A learner just acted and is looking
+at the result, so theirs fires in 400ms. An admin is watching someone else work:
+two seconds. A public visitor is not waiting at all — the page they are reading
+is still correct — so a public refresh is delayed three seconds *and given up to
+seven more at random*. Without that jitter, one editorial click would have every
+connected visitor demand a fresh server render in the same instant, which is the
+failure mode that makes live updates worse than none. A hidden tab refreshes
+nothing until it is looked at again.
 
 ---
 

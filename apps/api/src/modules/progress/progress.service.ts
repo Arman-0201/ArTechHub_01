@@ -6,6 +6,7 @@ import type {
 } from '@academy/types';
 import { prisma } from '../../lib/prisma.js';
 import { AuthorizationError, NotFoundError } from '../../lib/errors.js';
+import { announceLearnerChange } from '../../realtime/events.js';
 
 /**
  * Progress is server-authoritative.
@@ -194,6 +195,17 @@ export async function updateLessonProgress(
   }
 
   const course = await recomputeCourseProgress(input.userId, courseId, input.lessonId);
+
+  /*
+   * Announced after the aggregate is recomputed, never before: the event says
+   * "go and read again", and every other tab this learner has open will do
+   * exactly that. Firing early would have them read the old percentage.
+   *
+   * The tab that made the change hears it too, and re-reads a value it already
+   * has. That is the point — one write, every window in agreement, without the
+   * writer having to know which other screens exist.
+   */
+  announceLearnerChange(input.userId, ['progress']);
 
   return {
     lesson: {

@@ -4,11 +4,13 @@ import {
   FEATURE_DEFINITIONS,
   FEATURE_KEYS,
   PERMISSIONS,
+  REALTIME_PUBLIC_CHANNELS,
   REALTIME_RESOURCES,
   REALTIME_RESOURCE_PERMISSION,
+  type RealtimePublicChannel,
   type RealtimeResource,
 } from '@academy/types';
-import { resourcesForAction } from '../../src/realtime/events.js';
+import { publicChannelsForAction, resourcesForAction } from '../../src/realtime/events.js';
 import { AUDIT_ACTIONS } from '../../src/modules/audit/audit.service.js';
 import { parseRange } from '../../src/lib/range.js';
 
@@ -66,6 +68,80 @@ describe('realtime event mapping', () => {
       const permission = REALTIME_RESOURCE_PERMISSION[resource];
       expect(permission, `${resource} has no permission`).toBeDefined();
       expect(known.has(permission), `${resource} is gated by an unknown permission`).toBe(true);
+    }
+  });
+});
+
+/**
+ * The public half of the feed reaches anonymous visitors, so what it declines
+ * to say matters more than what it says. These pin the boundary: which actions
+ * produce a public event at all, and that the ones which reveal internal
+ * activity produce none.
+ */
+describe('public realtime channels', () => {
+  const PUBLIC_CHANNELS = new Set<string>(Object.values(REALTIME_PUBLIC_CHANNELS));
+
+  it('only ever emits channels the contract defines', () => {
+    for (const action of Object.values(AUDIT_ACTIONS)) {
+      for (const channel of publicChannelsForAction(action)) {
+        expect(PUBLIC_CHANNELS.has(channel), `${action} emits unknown channel ${channel}`).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it('tells visitors when something they can see moved', () => {
+    expect(publicChannelsForAction(AUDIT_ACTIONS.COURSE_STATUS_CHANGED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.CATALOG,
+    );
+    // A section is part of a page, and a page is content.
+    expect(publicChannelsForAction(AUDIT_ACTIONS.SECTION_UPDATED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.CONTENT,
+    );
+    expect(publicChannelsForAction(AUDIT_ACTIONS.MENU_UPDATED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.NAVIGATION,
+    );
+    expect(publicChannelsForAction(AUDIT_ACTIONS.PRODUCT_UPDATED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.COMMERCE,
+    );
+    // Turning a feature off changes what the site offers everyone.
+    expect(publicChannelsForAction(AUDIT_ACTIONS.FEATURE_TOGGLED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.PLATFORM,
+    );
+  });
+
+  it('says nothing to visitors about purely internal activity', () => {
+    // Each of these would tell a stranger that staff are working, and on what.
+    // None of them changes a single byte of what a visitor can read.
+    const internal = [
+      AUDIT_ACTIONS.USER_CREATED,
+      AUDIT_ACTIONS.USER_ROLES_CHANGED,
+      AUDIT_ACTIONS.USER_STATUS_CHANGED,
+      AUDIT_ACTIONS.ROLE_UPDATED,
+      AUDIT_ACTIONS.MEDIA_UPLOADED,
+      AUDIT_ACTIONS.MEDIA_DELETED,
+      AUDIT_ACTIONS.ORDER_STATUS_CHANGED,
+      AUDIT_ACTIONS.ENROLLMENT_CREATED,
+      AUDIT_ACTIONS.ENROLLMENT_CANCELLED,
+    ];
+
+    for (const action of internal) {
+      expect(publicChannelsForAction(action), `${action} leaked to the public feed`).toEqual([]);
+    }
+  });
+
+  it('stays silent for an action it does not know', () => {
+    // The opposite default to the admin map, and deliberately so: waking every
+    // open page for a change nobody can see is worse than leaving it alone.
+    expect(publicChannelsForAction('warehouse.restocked')).toEqual([]);
+    expect(publicChannelsForAction('')).toEqual([]);
+  });
+
+  it('never repeats a channel, so one change refreshes a page once', () => {
+    for (const action of Object.values(AUDIT_ACTIONS)) {
+      const channels: RealtimePublicChannel[] = publicChannelsForAction(action);
+      expect(new Set(channels).size, action).toBe(channels.length);
     }
   });
 });

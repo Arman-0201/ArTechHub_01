@@ -277,8 +277,7 @@ re-established explicitly:
 - **The same-origin policy does not apply.** Any page on any site can open a
   socket to the endpoint, so the handshake checks `Origin` against the CORS
   allowlist — the only thing between a hostile page and a socket opened with a
-  visitor's credentials. A missing `Origin` (a non-browser client) still has to
-  present a valid token.
+  visitor's credentials.
 - **The credential is not in the URL.** A browser `WebSocket` cannot set an
   `Authorization` header, and a token in the query string is written to every
   access log and proxy trace in the path. It travels as a subprotocol token
@@ -294,6 +293,24 @@ re-established explicitly:
   subscriber. The only message the server accepts is `{"type":"pong"}`, capped
   at 4KB — every write still goes through the HTTP API with its validation,
   rate limits and audit trail intact.
+- **An anonymous socket is accepted, and is worth nothing to hold.** The public
+  site updates itself, so a visitor with no session connects without a token and
+  is given the `public` audience. That audience carries a channel name and a
+  timestamp: no id, no actor, no publication state. There is no subscribe
+  message, so a client cannot ask for more than its credential granted, and the
+  audience is fixed at the handshake rather than re-evaluated. Actions that
+  would reveal internal activity — a role changed, a media file uploaded, an
+  order's status moved — emit no public event at all; the mapping is pinned by
+  tests.
+- **A token that is offered must be valid.** Presenting a bad credential is
+  refused (401) rather than quietly downgraded to the public feed, so a client
+  that believes it is signed in finds out instead of silently losing its own
+  events.
+- **The socket count is bounded three ways.** Six per account, sixty-four per
+  address, and a configurable global ceiling on anonymous sockets
+  (`REALTIME_MAX_ANONYMOUS`). A refused socket is not an error condition: the
+  visitor simply reads a page that does not live-update.
+  `REALTIME_PUBLIC_ENABLED=false` withdraws the anonymous half entirely.
 - **Bounded.** Six sockets per account, a 30-second heartbeat that terminates
   silent peers, and a 512KB per-socket send buffer past which the connection is
   dropped rather than allowed to grow.

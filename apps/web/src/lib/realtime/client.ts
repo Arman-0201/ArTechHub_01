@@ -9,7 +9,7 @@ import {
 import { getAccessToken, refreshSession } from '@/lib/api/client';
 
 /**
- * Browser end of the admin live feed.
+ * Browser end of the live feed.
  *
  * A WebSocket is the one call the browser makes that does *not* go through this
  * app's own origin. The Next route handler that proxies `/api/v1/*` cannot
@@ -17,7 +17,12 @@ import { getAccessToken, refreshSession } from '@/lib/api/client';
  * over the socket — so this connects straight to the API and authenticates with
  * a bearer token rather than the first-party cookie every other call uses.
  *
- * Everything here is about surviving the ordinary: a laptop lid closing, a
+ * A visitor with no session connects anyway, without a token, and is given the
+ * public feed. That is deliberate: the larger half of "the site keeps itself
+ * current" is the pages anyone can read, and a socket that carries only channel
+ * names is worth nothing to whoever holds it.
+ *
+ * Everything else here is about surviving the ordinary: a laptop lid closing, a
  * tunnel, a deploy restarting the API, an access token expiring mid-session.
  * None of those should need a page reload, and none of them should produce a
  * reconnect storm.
@@ -26,9 +31,35 @@ import { getAccessToken, refreshSession } from '@/lib/api/client';
 /** Backoff between reconnects: fast enough to feel instant, then patient. */
 const RETRY_DELAYS_MS = [500, 1_000, 2_000, 5_000, 10_000, 30_000];
 
+/**
+ * How many times to try before concluding the feed is simply not available
+ * here — but only while it has never once connected.
+ *
+ * A browser cannot see the status of a rejected upgrade: an operator who has
+ * switched the public feed off, an instance at its connection ceiling and a
+ * genuinely unreachable API all arrive as the same anonymous close. Retrying
+ * any of them forever would have every visitor knocking every thirty seconds
+ * for as long as their tab is open. Once a socket *has* opened, the cap no
+ * longer applies — a drop after that is a network event, and those recover.
+ *
+ * Giving up is not final either: returning to the tab or regaining a network
+ * connection re-arms it.
+ */
+const MAX_COLD_ATTEMPTS = 8;
+
 export interface RealtimeConnectionOptions {
   onEvent: (event: RealtimeServerEvent) => void;
   onStatus: (status: RealtimeStatus) => void;
+  /**
+   * Whether this tab believes it has a session.
+   *
+   * It decides only one thing: whether an absent access token is worth a
+   * refresh before connecting. For a signed-out visitor there is nothing to
+   * refresh and the request would be a wasted round trip on every page; for a
+   * signed-in one, skipping it would silently downgrade them to the public feed
+   * and lose their own events.
+   */
+  authenticated: boolean;
 }
 
 function socketUrl(): string | null {
@@ -72,6 +103,10 @@ export function connectRealtime(options: RealtimeConnectionOptions): () => void 
    * open a second one.
    */
   let opening = false;
+  /** Set by the first successful open, and never cleared. */
+  let hasEverOpened = false;
+  /** Failed attempts since the last success, or since the tab woke up. */
+  let coldAttempts = 0;
 
   const clearRetry = () => {
     if (retryTimer !== null) {
@@ -82,6 +117,11 @@ export function connectRealtime(options: RealtimeConnectionOptions): () => void 
 
   const scheduleRetry = (immediate = false) => {
     if (stopped || retryTimer !== null) return;
+
+    if (!hasEverOpened && coldAttempts >= MAX_COLD_ATTEMPTS) {
+      options.onStatus('disabled');
+      return;
+    }
 
     const base = immediate ? 0 : (RETRY_DELAYS_MS[attempt] ?? RETRY_DELAYS_MS.at(-1) ?? 30_000);
     attempt = Math.min(attempt + 1, RETRY_DELAYS_MS.length - 1);
@@ -103,8 +143,10 @@ export function connectRealtime(options: RealtimeConnectionOptions): () => void 
     // The token lives in the API client's memory and is short-lived. A refresh
     // here costs one request and removes the most common reason a socket is
     // refused, which would otherwise cost a full backoff cycle to discover.
+    // Only worth it for a tab that believes it has a session — see
+    // `authenticated`.
     let token = getAccessToken();
-    if (!token) {
+    if (!token && options.authenticated) {
       const session = await refreshSession();
       token = session?.accessToken ?? null;
     }
@@ -113,20 +155,16 @@ export function connectRealtime(options: RealtimeConnectionOptions): () => void 
       return;
     }
 
-    if (!token) {
-      // Not signed in as far as this tab is concerned. Retrying will not fix
-      // that, and the auth provider will re-mount this when a session appears.
-      opening = false;
-      options.onStatus('offline');
-      return;
-    }
-
     let next: WebSocket;
     try {
       // The credential rides as a subprotocol token because a browser
       // WebSocket cannot set headers, and a token in the URL would be written
-      // to every access log between here and the API.
-      next = new WebSocket(url, [REALTIME_SUBPROTOCOL, `${REALTIME_BEARER_PREFIX}${token}`]);
+      // to every access log between here and the API. Without one the socket
+      // is opened anyway and the server grants it the public feed.
+      const protocols = token
+        ? [REALTIME_SUBPROTOCOL, `${REALTIME_BEARER_PREFIX}${token}`]
+        : [REALTIME_SUBPROTOCOL];
+      next = new WebSocket(url, protocols);
     } catch {
       opening = false;
       options.onStatus('offline');
@@ -139,6 +177,8 @@ export function connectRealtime(options: RealtimeConnectionOptions): () => void 
 
     next.onopen = () => {
       attempt = 0;
+      coldAttempts = 0;
+      hasEverOpened = true;
       options.onStatus('open');
     };
 
@@ -167,6 +207,7 @@ export function connectRealtime(options: RealtimeConnectionOptions): () => void 
       socket = null;
       if (stopped) return;
 
+      coldAttempts += 1;
       options.onStatus('offline');
 
       if (event.code === REALTIME_CLOSE.FORBIDDEN) {
@@ -196,6 +237,9 @@ export function connectRealtime(options: RealtimeConnectionOptions): () => void 
     if (document.visibilityState === 'hidden') return;
     clearRetry();
     attempt = 0;
+    // Also re-arms a feed that gave up: whatever was refusing it may not be
+    // refusing it now, and this is a deliberate signal that the tab is back.
+    coldAttempts = 0;
     void open();
   };
 

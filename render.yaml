@@ -31,6 +31,15 @@ services:
       - key: TRUST_PROXY
         value: "2"
 
+      # The live feed. Every visitor holds one WebSocket, so the socket count
+      # tracks concurrent readers rather than administrators — set these before
+      # scaling this service past one instance, since the subscriber registry is
+      # in-process and a change on one instance does not reach the other.
+      - key: REALTIME_PUBLIC_ENABLED
+        value: "true"
+      - key: REALTIME_MAX_ANONYMOUS
+        value: "2000"
+
       # --- URLs (fill after the first deploy / after Vercel gives you a domain)
       - key: API_PUBLIC_URL
         sync: false

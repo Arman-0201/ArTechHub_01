@@ -14,6 +14,7 @@ import { generateReference } from '../../lib/crypto.js';
 import { uniqueSlug } from '../../lib/slug.js';
 import { resolveMediaUrl } from '../media/media.helpers.js';
 import { toSeoDto, upsertSeo } from '../seo/seo.service.js';
+import { announceLearnerChange } from '../../realtime/events.js';
 
 /**
  * E-commerce module.
@@ -396,6 +397,9 @@ export async function createOrder(input: CheckoutInput): Promise<OrderDto> {
     return created;
   });
 
+  // A guest checkout has no account to tell, and no order history to update.
+  announceLearnerChange(input.userId, ['orders']);
+
   return getOrderById(order.id);
 }
 
@@ -504,7 +508,15 @@ export async function adminListOrders(input: {
 export async function updateOrderStatus(id: string, status: string): Promise<OrderDto> {
   const order = await prisma.order.findUnique({
     where: { id },
-    select: { id: true, status: true, items: { select: { productId: true, quantity: true } } },
+    select: {
+      id: true,
+      status: true,
+      // Read here so the buyer can be told their order moved. An admin marking
+      // an order paid is the case this exists for: the person watching their
+      // order page is not the person who changed it.
+      userId: true,
+      items: { select: { productId: true, quantity: true } },
+    },
   });
   if (!order) throw new NotFoundError('Order');
 
@@ -533,6 +545,8 @@ export async function updateOrderStatus(id: string, status: string): Promise<Ord
       }
     }
   });
+
+  announceLearnerChange(order.userId, ['orders']);
 
   return getOrderById(id);
 }

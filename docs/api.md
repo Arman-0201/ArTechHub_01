@@ -483,51 +483,74 @@ anything still references the file.
 
 ## Realtime — `/realtime`
 
-A WebSocket carrying admin change notices. `GET /api/v1/realtime` accepts an
-HTTP upgrade; it is not an Express route and does not answer ordinary requests.
+One WebSocket per tab, for every visitor. `GET /api/v1/realtime` accepts an HTTP
+upgrade; it is not an Express route and does not answer ordinary requests.
 
 **Handshake.** A browser `WebSocket` cannot set headers, so the access token
 travels as a subprotocol token rather than in the query string, where it would
-reach every access log on the way:
+reach every access log on the way. Omitting it is legitimate and yields the
+public feed:
 
 ```js
+// signed in
 new WebSocket('wss://api.example.com/api/v1/realtime', [
   'academy.v1',
   `bearer.${accessToken}`,
 ]);
+
+// anonymous — the public feed
+new WebSocket('wss://api.example.com/api/v1/realtime', ['academy.v1']);
 ```
 
 The server echoes back `academy.v1` only. It rejects the upgrade with a plain
 HTTP status rather than opening a socket first:
 
-| Status | Reason                                                        |
-| ------ | ------------------------------------------------------------- |
-| 401    | No token, an invalid one, or an account that cannot sign in   |
-| 403    | `Origin` not in the CORS allowlist, or no admin permission     |
-| 429    | More than six sockets already open for the account            |
-| 404    | Any path other than `/api/v1/realtime`                        |
+| Status | Reason                                                            |
+| ------ | ----------------------------------------------------------------- |
+| 401    | A token was presented and is invalid, or the account cannot sign in |
+| 403    | `Origin` not in the CORS allowlist                                |
+| 429    | Six sockets already open for the account, or 64 from one address  |
+| 503    | The public feed is switched off, or at its anonymous ceiling      |
+| 404    | Any path other than `/api/v1/realtime`                            |
+
+**Audiences.** What a socket receives is fixed at the handshake and is
+cumulative — anonymous is `["public"]`, signed-in is `["public","learner"]`, an
+admin permission adds `"admin"`. There is no subscribe message; a client cannot
+ask for more than its credential granted.
 
 **Messages.** The server sends JSON; the client only ever answers `{"type":"pong"}`.
 
 ```jsonc
-// once, on connect
-{ "type": "ready", "resources": ["courses", "audit"],
+// once, on connect. `sessionExpiresAt` is null for an anonymous socket.
+{ "type": "ready", "audiences": ["public", "learner", "admin"],
+  "resources": ["courses", "audit"],
   "sessionExpiresAt": "2026-01-01T12:15:00.000Z", "serverTime": "…" }
 
 // every 30s; answer with {"type":"pong"} or be disconnected
 { "type": "ping", "at": "…" }
 
-// when something changed
+// public — reaches anonymous sockets, so it carries nothing but an area
+{ "type": "public.changed", "channels": ["catalog"], "at": "…" }
+
+// learner — delivered only to that account's sockets
+{ "type": "learner.changed", "topics": ["enrollments", "progress"], "at": "…" }
+
+// admin — the detailed one
 { "type": "resource.changed", "resources": ["courses", "audit", "overview"],
   "action": "course.updated", "targetType": "course", "targetId": "…",
   "actor": { "id": "…", "name": "Sona" }, "at": "…" }
 ```
 
-**An event never carries the changed record.** It names the resources whose
-screens are now stale, and the client refetches through the ordinary authorised
-endpoint. A socket therefore cannot become a second read path that skips a
-permission check, and `resources` is filtered per subscriber — an editor without
-`users.read` is not told that a user changed.
+Public channels are `catalog`, `content`, `navigation`, `commerce`, `platform`.
+Learner topics are `enrollments`, `progress`, `orders`, `profile`.
+
+**An event never carries the changed record.** It names what went stale, and the
+client refetches through the ordinary authorised endpoint. A socket therefore
+cannot become a second read path that skips a permission check — which is what
+makes it safe to hand one to an anonymous visitor. `resources` is filtered per
+subscriber (an editor without `users.read` is not told that a user changed), and
+a public event carries no id, no actor and no publication state, so a draft
+being edited is indistinguishable from anything else.
 
 **Close codes** are application-defined above 4000:
 
@@ -537,8 +560,10 @@ permission check, and `resources` is filtered per subscriber — an editor witho
 | 4503 | The API is shutting down. Reconnect; not an error                 |
 | 4403 | The account may not use the feed. Do not retry                    |
 
-The socket never outlives the token it presented, which is what keeps a revoked
-role from holding a live feed open until the tab closes.
+A socket carrying a session never outlives the token it presented, which is what
+keeps a revoked role from holding a live feed open until the tab closes. An
+anonymous socket presented nothing and so has nothing to outlive; the heartbeat
+reaps it.
 
 ---
 

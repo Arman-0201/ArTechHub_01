@@ -7,6 +7,7 @@ import type { Dictionary } from '@/lib/i18n/dictionaries';
 import { ApiError } from '@/lib/api/types';
 import { SiteProvider } from './site-provider';
 import { AuthProvider } from './auth-provider';
+import { RealtimeProvider } from './realtime-provider';
 import { ThemeScript, ThemeProvider } from './theme-provider';
 
 /**
@@ -15,6 +16,12 @@ import { ThemeScript, ThemeProvider } from './theme-provider';
  * Everything above this line is a Server Component: pages fetch their own data
  * on the server, and TanStack Query is used only where the client genuinely
  * owns the data (mutations, progress updates, admin tables with live filters).
+ *
+ * `RealtimeProvider` sits innermost because it reads the session — the socket's
+ * audience is fixed at the handshake, so signing in has to rebuild it — and
+ * needs the query client above it to invalidate what a change touched. One
+ * socket per tab serves the whole site from here: a marketing page, the
+ * dashboard and the admin panel are all inside it.
  */
 export function Providers({
   locale,
@@ -56,7 +63,7 @@ export function Providers({
       <ThemeProvider>
         <SiteProvider locale={locale} bootstrap={bootstrap} messages={messages}>
           <AuthProvider locale={locale} initialUser={initialUser}>
-            {children}
+            <RealtimeProvider>{children}</RealtimeProvider>
           </AuthProvider>
         </SiteProvider>
       </ThemeProvider>

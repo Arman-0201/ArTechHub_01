@@ -27,7 +27,6 @@ import {
 import { PERMISSIONS, type Permission, type SessionUserDto } from '@academy/types';
 import { cn } from '@/lib/utils';
 import { localePath } from '@/lib/i18n/config';
-import { RealtimeProvider } from '@/components/providers';
 import { RealtimeIndicator } from './realtime-indicator';
 
 /**
@@ -173,14 +172,15 @@ export function AdminShell({
     entries: group.entries.filter((entry) => can(entry.permission)),
   })).filter((group) => group.entries.length > 0);
 
-  /**
-   * The live feed is only opened for someone the API would accept: it refuses
-   * an account with no admin permission, and asking anyway would burn a
-   * handshake to be told so. `canAccessAdmin` is the same check the layout
-   * used to let this render at all.
+  /*
+   * No feed is opened here. One socket per tab is mounted site-wide in
+   * `Providers`, and it already carries the admin audience for an account
+   * holding an admin permission — this panel renders inside it. A second
+   * provider would mean a second socket per administrator, delivering every
+   * event twice and refreshing the same route twice.
    */
   return (
-    <RealtimeProvider enabled={user.canAccessAdmin}>
+    <>
       <div className="flex min-h-[calc(100dvh-var(--header-height))]">
         {isOpen ? (
           <button
@@ -276,6 +276,6 @@ export function AdminShell({
           <div className="p-4 sm:p-6 lg:p-8">{children}</div>
         </div>
       </div>
-    </RealtimeProvider>
+    </>
   );
 }

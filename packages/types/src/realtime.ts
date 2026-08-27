@@ -1,17 +1,28 @@
 import { PERMISSIONS, type Permission } from './permissions.js';
 
 /**
- * Admin real-time contract.
+ * Real-time contract.
  *
- * The admin panel is a set of long-lived screens over data several people
- * change at once. Polling every list would be wasteful and still lag; a single
- * socket per admin, carrying "this resource changed" notices, keeps every open
- * screen honest without any screen knowing the socket exists.
+ * One socket per open tab, for every visitor, carrying "this changed" notices
+ * so a page reflects the platform as it is rather than as it was when it
+ * loaded. Three audiences share the connection, and which of them a socket
+ * belongs to is decided once, at the handshake, from the credential it
+ * presented:
  *
- * Deliberately thin: an event names *what* changed, never carries the new row.
- * The client refetches through the normal authorised endpoint, so a socket can
- * never become a second, unguarded read path — a subscriber learns only that
- * something it is already allowed to read has moved.
+ *   - **public** — everyone, including anonymous visitors. Coarse channels
+ *     ("the catalogue moved"), no ids, no actor, no timing detail beyond the
+ *     fact that something changed.
+ *   - **learner** — any signed-in account, about its own data only: its
+ *     enrollments, its progress, its orders.
+ *   - **admin** — an account holding an admin permission, about the resources
+ *     it may read.
+ *
+ * Deliberately thin at every level: an event names *what* changed, never
+ * carries the new row. The client refetches through the normal authorised
+ * endpoint, so a socket can never become a second, unguarded read path — a
+ * subscriber learns only that something it is already allowed to read has
+ * moved. That property is what makes it safe to hand the same socket to an
+ * anonymous visitor and to a superadmin.
  */
 
 /** Upgrade path on the API. Not routed through Express — see `realtime/hub.ts`. */
@@ -29,9 +40,25 @@ export const REALTIME_PATH = '/api/v1/realtime';
 export const REALTIME_SUBPROTOCOL = 'academy.v1';
 export const REALTIME_BEARER_PREFIX = 'bearer.';
 
+/**
+ * Who a socket is, decided at the handshake and fixed for its lifetime.
+ *
+ * Cumulative rather than exclusive: every socket is `public`, a signed-in one
+ * is also `learner`, and one holding an admin permission is also `admin`. A
+ * socket is never told about an audience it does not hold, so widening the feed
+ * to anonymous visitors could not widen what an anonymous visitor learns.
+ */
+export const REALTIME_AUDIENCES = {
+  PUBLIC: 'public',
+  LEARNER: 'learner',
+  ADMIN: 'admin',
+} as const;
+
+export type RealtimeAudience = (typeof REALTIME_AUDIENCES)[keyof typeof REALTIME_AUDIENCES];
+
 /** Close codes above 4000 are application-defined; these are ours. */
 export const REALTIME_CLOSE = {
-  /** Credentials missing, malformed, or for an account that cannot sign in. */
+  /** Credentials were presented but are malformed or for an unusable account. */
   UNAUTHENTICATED: 4401,
   /** Authenticated, but holds no admin permission. */
   FORBIDDEN: 4403,
@@ -95,6 +122,74 @@ export const REALTIME_RESOURCE_PERMISSION: Record<RealtimeResource, Permission> 
   [REALTIME_RESOURCES.OVERVIEW]: PERMISSIONS.ANALYTICS_READ,
 };
 
+/* --------------------------------------------------------------- public */
+
+/**
+ * What a visitor's page might be showing.
+ *
+ * Coarse on purpose. An admin event names a record; a public event names an
+ * area of the site, because the recipient may be anonymous and the change may
+ * concern something not yet published. "The catalogue moved" is enough for a
+ * page to re-render itself from the public API — which shows published content
+ * and nothing else — while telling a stranger nothing about what was edited,
+ * by whom, or whether it is visible to them at all.
+ */
+export const REALTIME_PUBLIC_CHANNELS = {
+  /** Courses, categories, instructors — anything in the course catalogue. */
+  CATALOG: 'catalog',
+  /** CMS pages and their sections, articles, legal documents. */
+  CONTENT: 'content',
+  /** Menus, footer, site settings, active languages — the chrome. */
+  NAVIGATION: 'navigation',
+  /** Shop products and their prices. */
+  COMMERCE: 'commerce',
+  /** Feature flags and maintenance mode: what the site currently offers. */
+  PLATFORM: 'platform',
+} as const;
+
+export type RealtimePublicChannel =
+  (typeof REALTIME_PUBLIC_CHANNELS)[keyof typeof REALTIME_PUBLIC_CHANNELS];
+
+/**
+ * Something changed in an area of the public site.
+ *
+ * No actor, no target, no id — deliberately. This event reaches anonymous
+ * visitors, so everything it carries is something a stranger may know.
+ */
+export interface RealtimePublicChangeEvent {
+  type: 'public.changed';
+  channels: RealtimePublicChannel[];
+  at: string;
+}
+
+/* -------------------------------------------------------------- learner */
+
+/**
+ * A signed-in account's own data.
+ *
+ * Delivered only to that account's sockets. The topics are the things a
+ * learner can see change without having caused it themselves: an admin
+ * granting an enrollment, a payment clearing, or the same person completing a
+ * lesson in another tab.
+ */
+export const REALTIME_LEARNER_TOPICS = {
+  ENROLLMENTS: 'enrollments',
+  PROGRESS: 'progress',
+  ORDERS: 'orders',
+  PROFILE: 'profile',
+} as const;
+
+export type RealtimeLearnerTopic =
+  (typeof REALTIME_LEARNER_TOPICS)[keyof typeof REALTIME_LEARNER_TOPICS];
+
+export interface RealtimeLearnerChangeEvent {
+  type: 'learner.changed';
+  topics: RealtimeLearnerTopic[];
+  at: string;
+}
+
+/* ---------------------------------------------------------------- admin */
+
 /** Who caused a change. Present unless the platform itself did it. */
 export interface RealtimeActor {
   id: string | null;
@@ -122,10 +217,15 @@ export interface RealtimeChangeEvent {
 /** Sent once on connect so the client can render state before anything changes. */
 export interface RealtimeReadyEvent {
   type: 'ready';
-  /** Resources this socket will actually receive, given its permissions. */
+  /** What this socket turned out to be. Anonymous sockets get `['public']`. */
+  audiences: RealtimeAudience[];
+  /** Admin resources this socket will receive, given its permissions. */
   resources: RealtimeResource[];
-  /** When the access token behind this socket expires (ISO 8601). */
-  sessionExpiresAt: string;
+  /**
+   * When the access token behind this socket expires (ISO 8601), or null for an
+   * anonymous socket — which presented no session and so has none to outlive.
+   */
+  sessionExpiresAt: string | null;
   serverTime: string;
 }
 
@@ -135,7 +235,12 @@ export interface RealtimePingEvent {
   at: string;
 }
 
-export type RealtimeServerEvent = RealtimeReadyEvent | RealtimeChangeEvent | RealtimePingEvent;
+export type RealtimeServerEvent =
+  | RealtimeReadyEvent
+  | RealtimeChangeEvent
+  | RealtimePublicChangeEvent
+  | RealtimeLearnerChangeEvent
+  | RealtimePingEvent;
 
 export type RealtimeClientMessage = { type: 'pong' };
 

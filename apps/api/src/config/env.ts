@@ -113,6 +113,24 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().min(10).default(300),
 
+  /**
+   * Whether anonymous visitors may open a live-feed socket.
+   *
+   * On, the public site updates itself when content is published. Off, only
+   * signed-in accounts connect and every public page behaves exactly as it did
+   * before the feed existed — a page still renders, still navigates, and is
+   * still correct as of its last load. It is an escape hatch for an operator
+   * whose traffic outgrows one API instance, not a feature toggle.
+   */
+  REALTIME_PUBLIC_ENABLED: booleanish.default(true),
+
+  /**
+   * A ceiling on anonymous sockets, so a burst of traffic cannot turn the feed
+   * into unbounded memory. Past it, new visitors are refused the socket and
+   * simply browse a site that does not live-update.
+   */
+  REALTIME_MAX_ANONYMOUS: z.coerce.number().int().min(0).default(2_000),
+
   SEED_ADMIN_EMAIL: z.string().email().default('admin@academy.local'),
   SEED_ADMIN_PASSWORD: z.string().min(10).default('Admin123!Change'),
   SEED_ADMIN_NAME: z.string().default('Platform Owner'),

@@ -5,6 +5,7 @@ import { AuthorizationError, BadRequestError, ConflictError, NotFoundError } fro
 import { buildPaginationMeta, toSkipTake } from '../../lib/http.js';
 import { resolveMediaUrl } from '../media/media.helpers.js';
 import { applyTranslation, pickTranslation } from '../translations/translation.helpers.js';
+import { announceLearnerChange } from '../../realtime/events.js';
 
 /**
  * Enrollment is where course access is granted, so the access-type rules live
@@ -137,6 +138,14 @@ export async function enroll(input: EnrollInput): Promise<EnrollmentDto> {
     update: { totalLessons },
   });
 
+  /*
+   * The learner is not always the person who acted. An administrator granting
+   * access, or an order clearing, reaches this line with someone else's session
+   * on the request — and the whole value of the announcement is that their
+   * dashboard grows a course while they are looking at it.
+   */
+  announceLearnerChange(input.userId, ['enrollments', 'progress']);
+
   return getEnrollment(input.userId, input.courseId, 'en');
 }
 
@@ -155,6 +164,8 @@ export async function cancelEnrollment(userId: string, courseId: string): Promis
       data: { enrollmentCount: { decrement: 1 } },
     }),
   ]);
+
+  announceLearnerChange(userId, ['enrollments', 'progress']);
 }
 
 export async function getEnrollment(
