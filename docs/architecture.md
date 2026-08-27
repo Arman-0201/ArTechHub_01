@@ -262,6 +262,26 @@ the endpoint has a rate limit of its own: one open document is one logical read
 spread over dozens of requests, which would otherwise exhaust the global
 allowance for everything else the same visitor does.
 
+### The same reader on a CMS page
+
+A `PDF_GALLERY` section publishes documents on any CMS page: a responsive grid
+of covers that opens the same `PdfReader` in an overlay. The reader is shared
+verbatim — it takes a URL, a name and a size, and does not know or care which
+route produced them.
+
+What differs is the route and what it will serve. `GET /documents/:id` needs no
+session, because an editor put the document on a public page; in exchange it
+refuses anything that is not a PDF, and anything attached to a lesson, so a
+document behind a course's access check cannot be republished by id.
+
+Covers are rendered **in the editor's browser**, at the moment a document is
+added: pdf.js draws page one to a canvas and the JPEG is uploaded as ordinary
+media. That keeps a marketing page showing thirty documents at thirty `<img>`
+tags rather than thirty copies of pdf.js, and leaves the server with no
+rasteriser to install. A document whose cover will not render still publishes,
+against a deterministic placeholder — the same treatment a course with no
+artwork gets.
+
 ---
 
 ## The two rendering engines

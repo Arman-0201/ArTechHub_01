@@ -22,6 +22,10 @@ import {
   TextSection,
   VideoSection,
 } from './blocks';
+// Imported from its own module rather than re-exported through `blocks`: the
+// gallery section imports `SectionShell` from there, and routing it back
+// through the same barrel would close an import cycle for no gain.
+import { PdfGallerySection } from './pdf-gallery-section';
 
 /**
  * Section registry.
@@ -50,6 +54,7 @@ const REGISTRY: Partial<Record<SectionType, ComponentType<SectionProps>>> = {
   CAROUSEL: LogoCarouselSection,
   LOGO_CAROUSEL: LogoCarouselSection,
   VIDEO: VideoSection,
+  PDF_GALLERY: PdfGallerySection,
   NEWSLETTER: NewsletterSection,
   TEAM: TeamSection,
   INSTRUCTOR_LIST: InstructorListSection,

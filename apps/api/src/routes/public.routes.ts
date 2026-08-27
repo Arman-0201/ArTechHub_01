@@ -4,6 +4,7 @@ import {
   categoryListQuerySchema,
   contactMessageSchema,
   courseListQuerySchema,
+  idParamSchema,
   newsletterSubscribeSchema,
   productListQuerySchema,
   searchQuerySchema,
@@ -25,6 +26,7 @@ import * as categoriesService from '../modules/categories/categories.service.js'
 import * as coursesService from '../modules/courses/courses.service.js';
 import * as instructorsService from '../modules/courses/instructors.service.js';
 import * as lessonsService from '../modules/lessons/lessons.service.js';
+import * as mediaService from '../modules/media/media.service.js';
 import * as pagesService from '../modules/pages/pages.service.js';
 import * as blogService from '../modules/blog/blog.service.js';
 import * as searchService from '../modules/search/search.service.js';
@@ -231,6 +233,38 @@ publicRouter.get(
       instructor: req.params.slug!,
     });
     ok(res, { instructor, courses: courses.items });
+  }),
+);
+
+/* -------------------------------------------------------------- documents */
+
+/**
+ * Library PDF stream — what the page-section gallery's reader reads from.
+ *
+ * The lesson equivalent above is access-controlled per learner; this one serves
+ * documents an editor has deliberately published on a CMS page, so there is
+ * nothing to authorise. What it shares is the part that matters to the reader:
+ * `Range` support, so pdf.js paints page one while the rest of the file is
+ * still arriving, and a same-origin path, so the app's CSP and the browser's
+ * cookie rules both stay out of the way.
+ *
+ * The service decides what may be served — PDFs only, and nothing attached to
+ * a lesson. The rate limit is the shared document-stream bucket, sized for one
+ * reader opening several documents rather than for someone walking ids.
+ */
+publicRouter.get(
+  '/documents/:id',
+  pdfStreamLimiter,
+  validateParams(idParamSchema),
+  asyncHandler(async (req, res) => {
+    const source = await mediaService.getPublicDocumentSource(req.params.id!);
+
+    await sendRangeStream(req, res, {
+      sizeBytes: source.sizeBytes,
+      mimeType: source.mimeType,
+      fileName: source.fileName,
+      open: (range) => openObjectStream(source.storageKey, source.storageDriver, range),
+    });
   }),
 );
 

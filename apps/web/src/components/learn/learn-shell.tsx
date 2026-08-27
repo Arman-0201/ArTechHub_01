@@ -18,7 +18,7 @@ import { cn, formatDuration } from '@/lib/utils';
 import { localePath } from '@/lib/i18n/config';
 import { Button, ProgressBar } from '@/components/ui';
 import { RichText } from '@/components/content/rich-text';
-import { PdfReader } from './pdf-reader';
+import { PdfReader } from '@/components/content/pdf-reader';
 import { LessonSidebar } from './lesson-sidebar';
 
 /**
@@ -238,7 +238,7 @@ export function LearnShell({
                 </h2>
                 <PdfReader
                   pdf={lesson.pdfReader}
-                  lessonId={lesson.id}
+                  documentId={lesson.id}
                   downloadUrl={lesson.sourcePdfUrl}
                 />
               </section>

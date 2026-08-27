@@ -99,3 +99,16 @@ export function safeRedirectPath(value: string | null | undefined, fallback: str
   if (!value.startsWith('/') || value.startsWith('//')) return fallback;
   return value;
 }
+
+/**
+ * A file size a reader can judge at a glance.
+ *
+ * Deliberately coarse: one decimal place from a megabyte up, whole kilobytes
+ * below, and never zero — a file that exists is at least "1 KB". The number is
+ * there to answer "is this a quick look or a download?", not to be exact.
+ */
+export function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '';
+  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}

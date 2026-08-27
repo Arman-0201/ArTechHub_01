@@ -11,17 +11,16 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import type { LessonPdfReaderDto } from '@academy/types';
-import { cn } from '@/lib/utils';
+import { cn, formatFileSize } from '@/lib/utils';
+import { loadPdfjs, type PdfModule } from '@/lib/pdfjs';
 
 /**
  * In-browser PDF reader.
  *
  * Reads the document where it lives instead of downloading it: pdf.js pulls
- * byte ranges from an access-controlled endpoint, so the first page paints
- * while the rest of the file is still arriving and a large document opens as
- * fast as a small one. Nothing is written to disk, and the bytes are never
- * public — the stream authenticates with the reader's own session.
+ * byte ranges from a same-origin endpoint, so the first page paints while the
+ * rest of the file is still arriving and a large document opens as fast as a
+ * small one. Nothing is written to disk.
  *
  * Rendering is per page and on demand. A page canvas is created when the page
  * approaches the viewport and released when it leaves, which keeps a
@@ -29,10 +28,29 @@ import { cn } from '@/lib/utils';
  * hundred; at four bytes per device pixel, doing otherwise is how a reader runs
  * a laptop out of memory.
  *
- * The admin panel can switch this off (`PDF_READER_ENABLED`). When it does, the
- * server stops describing a readable PDF and stops serving one, so this
- * component is simply never rendered — see `LearnShell`.
+ * Two callers, one component. A lesson's source PDF streams from an
+ * access-controlled route that authenticates with the reader's own session and
+ * disappears when an operator switches `PDF_READER_ENABLED` off — see
+ * `LearnShell`. A CMS page's PDF gallery streams a document an editor
+ * published, from `/api/v1/documents/:id` — see `PdfGallerySection`. Which
+ * bytes may be served is the server's decision in both cases; all this needs
+ * is a URL, a name and a size.
  */
+
+/**
+ * A document this reader can open.
+ *
+ * `url` is a same-origin path, not the object-storage URL: pdf.js reads through
+ * `fetch`, so the bytes have to come from an origin the app's `connect-src`
+ * names, and range support is what makes progressive rendering possible at all.
+ * `sizeBytes` lets the loading state show real progress rather than an
+ * indeterminate spinner. `LessonPdfReaderDto` satisfies this shape.
+ */
+export interface PdfReaderSource {
+  url: string;
+  fileName: string;
+  sizeBytes: number;
+}
 
 /** Enough pages to cover a scroll flick without rendering the whole document. */
 const RENDER_MARGIN_PX = 800;
@@ -45,7 +63,6 @@ const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
  */
 const MAX_PIXEL_RATIO = 2;
 
-type PdfModule = typeof import('pdfjs-dist');
 type PdfDocument = Awaited<ReturnType<PdfModule['getDocument']>['promise']>;
 type PdfPageProxy = Awaited<ReturnType<PdfDocument['getPage']>>;
 
@@ -68,22 +85,22 @@ const INITIAL_STATE: ReaderState = {
   message: null,
 };
 
-function storageKey(lessonId: string): string {
-  return `academy.pdf-reader.${lessonId}.page`;
+function storageKey(documentId: string): string {
+  return `academy.pdf-reader.${documentId}.page`;
 }
 
 /**
- * Where this reader left off, per lesson.
+ * Where this reader left off, per document.
  *
  * Deliberately local rather than server-side: it is a scroll position, not
  * progress. Lesson completion is the server's business and is recorded through
  * the normal endpoint; remembering which page a tab was on does not deserve a
  * write, and being wrong about it costs a scroll.
  */
-function readSavedPage(lessonId: string): number | null {
+function readSavedPage(documentId: string): number | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(storageKey(lessonId));
+    const raw = window.localStorage.getItem(storageKey(documentId));
     const page = raw ? Number.parseInt(raw, 10) : Number.NaN;
     return Number.isFinite(page) && page > 0 ? page : null;
   } catch {
@@ -91,9 +108,9 @@ function readSavedPage(lessonId: string): number | null {
   }
 }
 
-function savePage(lessonId: string, page: number): void {
+function savePage(documentId: string, page: number): void {
   try {
-    window.localStorage.setItem(storageKey(lessonId), String(page));
+    window.localStorage.setItem(storageKey(documentId), String(page));
   } catch {
     /* Private mode, or storage full. The reader works without it. */
   }
@@ -101,14 +118,22 @@ function savePage(lessonId: string, page: number): void {
 
 export function PdfReader({
   pdf,
-  lessonId,
+  documentId,
   downloadUrl,
+  height = 'inline',
   className,
 }: {
-  pdf: LessonPdfReaderDto;
-  lessonId: string;
+  pdf: PdfReaderSource;
+  documentId: string;
   /** The original file, for readers who would rather have it offline. */
   downloadUrl: string | null;
+  /**
+   * `inline` sizes the reading pane itself, for a reader sitting in a page's
+   * flow. `fill` hands that decision to the parent — the gallery's overlay is
+   * already the size of the window, so the reader stretches to it and the
+   * expand control, which would have nothing left to expand into, is dropped.
+   */
+  height?: 'inline' | 'fill';
   className?: string;
 }) {
   const [state, setState] = useState<ReaderState>(INITIAL_STATE);
@@ -133,21 +158,17 @@ export function PdfReader({
 
     async function load() {
       try {
-        // Imported here rather than at module scope: pdf.js touches browser
-        // globals on load, it is far too large to sit in the initial bundle,
-        // and a lesson without a PDF should never pay for it.
-        const pdfjs = await import('pdfjs-dist');
-
-        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-          'pdfjs-dist/build/pdf.worker.min.mjs',
-          import.meta.url,
-        ).toString();
+        // Loaded on demand, not at module scope: pdf.js touches browser globals
+        // and is far too large to sit in the initial bundle, so a page without a
+        // document on it should never pay for it.
+        const pdfjs = await loadPdfjs();
 
         loadingTask = pdfjs.getDocument({
           url: pdf.url,
-          // The stream is authorised by the session cookie, so the request has
-          // to carry credentials. It is same-origin — the web app proxies it —
-          // which is what makes that cookie available at all.
+          // A lesson stream is authorised by the session cookie, so the request
+          // has to carry credentials. It is same-origin — the web app proxies
+          // it — which is what makes that cookie available at all. A published
+          // document needs no session, and sending one costs nothing.
           withCredentials: true,
           // Fetch what the reader is looking at, not the whole file. Combined
           // with the range support on the endpoint, this is what makes a large
@@ -284,8 +305,8 @@ export function PdfReader({
 
   useEffect(() => {
     if (state.status !== 'ready') return;
-    savePage(lessonId, currentPage);
-  }, [lessonId, currentPage, state.status]);
+    savePage(documentId, currentPage);
+  }, [documentId, currentPage, state.status]);
 
   // Restore the saved page once, after the first layout pass has given the
   // pages a height to scroll to.
@@ -293,7 +314,7 @@ export function PdfReader({
     if (state.status !== 'ready' || restoredRef.current) return;
     restoredRef.current = true;
 
-    const saved = readSavedPage(lessonId);
+    const saved = readSavedPage(documentId);
     if (!saved || saved <= 1 || saved > state.pageCount) return;
 
     const timer = window.setTimeout(() => {
@@ -301,7 +322,7 @@ export function PdfReader({
       if (element) element.scrollIntoView({ block: 'start' });
     }, 150);
     return () => window.clearTimeout(timer);
-  }, [state.status, state.pageCount, lessonId]);
+  }, [state.status, state.pageCount, documentId]);
 
   /* ---------------------------------------------------------------- view */
 
@@ -310,10 +331,17 @@ export function PdfReader({
     [state.pageCount],
   );
 
+  const isFilled = height === 'fill';
+
   if (state.status === 'error') {
     return (
-      <ReaderFrame className={className}>
-        <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
+      <ReaderFrame fill={isFilled} className={className}>
+        <div
+          className={cn(
+            'flex flex-col items-center justify-center gap-3 px-6 py-12 text-center',
+            isFilled && 'min-h-0 flex-1',
+          )}
+        >
           <AlertTriangle className="size-6 text-warning" aria-hidden="true" />
           <p className="text-sm text-text-secondary">{state.message}</p>
           {downloadUrl ? (
@@ -332,7 +360,7 @@ export function PdfReader({
   }
 
   return (
-    <ReaderFrame className={className}>
+    <ReaderFrame fill={isFilled} className={className}>
       <Toolbar
         currentPage={currentPage}
         pageCount={state.pageCount}
@@ -340,6 +368,7 @@ export function PdfReader({
         canZoomOut={zoomIndex > 0}
         canZoomIn={zoomIndex < ZOOM_STEPS.length - 1}
         isExpanded={isExpanded}
+        canExpand={!isFilled}
         isLoading={state.status === 'loading'}
         fileName={pdf.fileName}
         downloadUrl={downloadUrl}
@@ -353,7 +382,11 @@ export function PdfReader({
       />
 
       {state.status === 'loading' ? (
-        <LoadingPane progress={state.progress} sizeBytes={pdf.sizeBytes} />
+        <LoadingPane
+          progress={state.progress}
+          sizeBytes={pdf.sizeBytes}
+          className={isFilled ? 'min-h-0 flex-1 justify-center' : undefined}
+        />
       ) : null}
 
       <div
@@ -365,7 +398,11 @@ export function PdfReader({
         className={cn(
           'overflow-auto overscroll-contain bg-surface-sunken outline-none',
           'focus-visible:ring-2 focus-visible:ring-border-focus',
-          isExpanded ? 'h-[calc(100dvh-12rem)]' : 'h-[70vh] min-h-100 max-h-200',
+          isFilled
+            ? 'min-h-0 flex-1'
+            : isExpanded
+              ? 'h-[calc(100dvh-12rem)]'
+              : 'h-[70vh] min-h-100 max-h-200',
           state.status === 'loading' && 'hidden',
         )}
       >
@@ -581,10 +618,25 @@ function PdfPageView({
 
 /* --------------------------------------------------------------- chrome */
 
-function ReaderFrame({ children, className }: { children: ReactNode; className?: string }) {
+function ReaderFrame({
+  children,
+  fill,
+  className,
+}: {
+  children: ReactNode;
+  fill?: boolean;
+  className?: string;
+}) {
   return (
     <figure
-      className={cn('overflow-hidden rounded-xl border border-border bg-surface', className)}
+      className={cn(
+        'overflow-hidden rounded-xl border border-border bg-surface',
+        // A column so the toolbar keeps its natural height and the reading pane
+        // takes whatever is left; `min-h-0` is what lets that pane shrink and
+        // scroll rather than pushing the frame past its parent.
+        fill && 'flex h-full min-h-0 flex-col',
+        className,
+      )}
     >
       {children}
     </figure>
@@ -598,6 +650,7 @@ function Toolbar({
   canZoomIn,
   canZoomOut,
   isExpanded,
+  canExpand,
   isLoading,
   fileName,
   downloadUrl,
@@ -612,6 +665,7 @@ function Toolbar({
   canZoomIn: boolean;
   canZoomOut: boolean;
   isExpanded: boolean;
+  canExpand: boolean;
   isLoading: boolean;
   fileName: string;
   downloadUrl: string | null;
@@ -621,7 +675,7 @@ function Toolbar({
   onToggleExpanded: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2">
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2">
       <p className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary" title={fileName}>
         {fileName}
       </p>
@@ -660,16 +714,18 @@ function Toolbar({
         </ToolbarButton>
       </div>
 
-      <ToolbarButton
-        label={isExpanded ? 'Shrink the reader' : 'Expand the reader'}
-        onClick={onToggleExpanded}
-      >
-        {isExpanded ? (
-          <Minimize2 className="size-4" aria-hidden="true" />
-        ) : (
-          <Maximize2 className="size-4" aria-hidden="true" />
-        )}
-      </ToolbarButton>
+      {canExpand ? (
+        <ToolbarButton
+          label={isExpanded ? 'Shrink the reader' : 'Expand the reader'}
+          onClick={onToggleExpanded}
+        >
+          {isExpanded ? (
+            <Minimize2 className="size-4" aria-hidden="true" />
+          ) : (
+            <Maximize2 className="size-4" aria-hidden="true" />
+          )}
+        </ToolbarButton>
+      ) : null}
 
       {downloadUrl ? (
         <a
@@ -721,11 +777,19 @@ function ToolbarButton({
  * can be told how much of the document has arrived rather than only that
  * something is happening.
  */
-function LoadingPane({ progress, sizeBytes }: { progress: number | null; sizeBytes: number }) {
+function LoadingPane({
+  progress,
+  sizeBytes,
+  className,
+}: {
+  progress: number | null;
+  sizeBytes: number;
+  className?: string;
+}) {
   const percent = progress === null ? null : Math.round(progress * 100);
 
   return (
-    <div className="flex flex-col items-center gap-3 px-6 py-14">
+    <div className={cn('flex flex-col items-center gap-3 px-6 py-14', className)}>
       <div
         className="h-1 w-48 overflow-hidden rounded-full bg-surface-sunken"
         role="progressbar"
@@ -745,15 +809,10 @@ function LoadingPane({ progress, sizeBytes }: { progress: number | null; sizeByt
       <p className="text-xs text-text-muted">
         {percent === null
           ? 'Opening the document…'
-          : `Loading ${percent}% of ${formatBytes(sizeBytes)}`}
+          : `Loading ${percent}% of ${formatFileSize(sizeBytes)}`}
       </p>
     </div>
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 /**

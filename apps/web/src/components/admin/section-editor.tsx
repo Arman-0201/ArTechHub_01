@@ -4,10 +4,12 @@ import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { PageSectionDto, RichTextDocument } from '@academy/types';
 import { api, useApiMutation } from '@/lib/api/hooks';
+import { readPdfGalleryItems, type PdfGalleryItem } from '@/lib/pdf-gallery';
 import { Alert, Button, Checkbox, Input, Select, Textarea } from '@/components/ui';
 import { Modal } from './primitives';
 import { RichTextEditor } from './rich-text-editor';
 import { MediaPickerButton } from './media-picker';
+import { PdfGalleryField } from './pdf-gallery-field';
 
 /**
  * Section content editor.
@@ -26,7 +28,17 @@ export function SectionEditor({
   section: PageSectionDto;
   onClose: () => void;
 }) {
-  const [content, setContent] = useState<Record<string, unknown>>(section.content);
+  /**
+   * A gallery's items are normalised once, on open, rather than on every
+   * render. The reader is defensive — it fills in a missing title from the file
+   * name — and re-running it against the working copy would fight the editor:
+   * clearing a title would snap it straight back to the file name mid-keystroke.
+   */
+  const [content, setContent] = useState<Record<string, unknown>>(() =>
+    section.type === 'PDF_GALLERY'
+      ? { ...section.content, items: readPdfGalleryItems(section.content) }
+      : section.content,
+  );
   const [settings, setSettings] = useState<Record<string, unknown>>(section.settings);
   const [isVisible, setIsVisible] = useState(section.isVisible);
   const [error, setError] = useState<string | null>(null);
@@ -441,6 +453,40 @@ function SectionFields({ type, content, set, setSetting, settings, text }: Field
             />
             <MediaPickerButton kind="VIDEO" onSelect={(media) => set({ src: media.url })} />
           </div>
+        </>
+      );
+
+    case 'PDF_GALLERY':
+      return (
+        <>
+          <Input
+            label="Heading"
+            hint="Left blank, the grid stands on its own without a title above it."
+            value={text('title')}
+            onChange={(event) => set({ title: event.target.value })}
+          />
+          <Textarea
+            label="Description"
+            rows={2}
+            value={text('description')}
+            onChange={(event) => set({ description: event.target.value })}
+          />
+          <Select
+            label="Columns"
+            hint="On phones the grid is always two across."
+            value={String(numberSetting('columns', 4))}
+            onChange={(event) => setSetting({ columns: Number(event.target.value) })}
+            options={[
+              { value: '2', label: '2 columns' },
+              { value: '3', label: '3 columns' },
+              { value: '4', label: '4 columns' },
+              { value: '5', label: '5 columns' },
+            ]}
+          />
+          <PdfGalleryField
+            items={Array.isArray(content.items) ? (content.items as PdfGalleryItem[]) : []}
+            onChange={(galleryItems) => set({ items: galleryItems })}
+          />
         </>
       );
 

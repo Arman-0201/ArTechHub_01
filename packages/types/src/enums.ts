@@ -61,6 +61,7 @@ export const SECTION_TYPES = [
   'CAROUSEL',
   'LOGO_CAROUSEL',
   'VIDEO',
+  'PDF_GALLERY',
   'NEWSLETTER',
   'TEAM',
   'INSTRUCTOR_LIST',

@@ -297,3 +297,61 @@ export async function listFolders(): Promise<string[]> {
   });
   return rows.map((row) => row.folder!).filter(Boolean);
 }
+
+/* ------------------------------------------------------------- documents */
+
+export interface DocumentSource {
+  storageKey: string;
+  storageDriver: string;
+  mimeType: string;
+  sizeBytes: number;
+  fileName: string;
+}
+
+/**
+ * A library PDF, addressed by id, for the public document stream.
+ *
+ * The bytes themselves are no more reachable than they already were — every
+ * media object is served from an unauthenticated storage URL, which is how a
+ * section image renders at all. What this adds is a *same-origin* route with
+ * range support, which the in-browser reader needs: the app's CSP names its own
+ * origin and the API's, not whichever bucket or CDN the storage driver points
+ * at, and pdf.js reads through `fetch` rather than an `<img>`.
+ *
+ * Two refusals, both answered as 404 so nothing about the library leaks:
+ *
+ *   - anything that is not a PDF. The reader cannot render it, and streaming
+ *     arbitrary uploaded types from the app's own origin is the sort of thing
+ *     that turns a media library into a file host;
+ *   - anything attached to a lesson. Course material is gated by the lesson's
+ *     own access check, and an id-addressable route that ignored that would be
+ *     a way around it — an editor who picked a paid course's source PDF for a
+ *     public gallery would otherwise publish the course.
+ */
+export async function getPublicDocumentSource(id: string): Promise<DocumentSource> {
+  const media = await prisma.media.findUnique({
+    where: { id },
+    select: {
+      mimeType: true,
+      sizeBytes: true,
+      storageKey: true,
+      storageDriver: true,
+      fileName: true,
+      originalName: true,
+      _count: { select: { lessonPdfs: true, lessonAttachments: true } },
+    },
+  });
+
+  if (!media || media.mimeType !== 'application/pdf') throw new NotFoundError('Document');
+  if (media._count.lessonPdfs > 0 || media._count.lessonAttachments > 0) {
+    throw new NotFoundError('Document');
+  }
+
+  return {
+    storageKey: media.storageKey,
+    storageDriver: media.storageDriver,
+    mimeType: media.mimeType,
+    sizeBytes: media.sizeBytes,
+    fileName: media.originalName || media.fileName,
+  };
+}

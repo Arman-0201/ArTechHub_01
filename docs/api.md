@@ -186,6 +186,7 @@ absent from an anonymous response entirely.
 | GET    | `/courses/:slug/lessons/:lessonSlug/pdf` | Lesson PDF, streamed (access-checked) |
 | GET    | `/instructors`                          | Instructor directory               |
 | GET    | `/instructors/:slug`                    | Profile plus their courses         |
+| GET    | `/documents/:id`                        | A published PDF, streamed          |
 
 `GET /courses` accepts `category`, `level`, `access`, `tag`, `instructor`,
 `featured`, plus the common list parameters. It returns published courses only —
@@ -242,6 +243,26 @@ unaffected by the flag: the original stays downloadable either way.
 Because one open document issues many range requests, this path is excluded from
 the global rate limit and counted against its own — see
 [security.md](security.md#rate-limiting).
+
+#### The published document stream
+
+`GET /documents/:id` serves a library PDF by media id. It is what a CMS page's
+`PDF_GALLERY` section reads from, and it needs no session: an editor put the
+document on a public page, and every media object is already reachable at an
+unauthenticated storage URL. What the endpoint adds is a *same-origin* path with
+range support — the app's CSP names its own origin and the API's, not whichever
+bucket the storage driver points at, and pdf.js reads through `fetch` rather than
+an `<img>`.
+
+Two refusals, both answered 404 so nothing about the library leaks:
+
+- anything that is not `application/pdf`;
+- anything attached to a lesson, as a source PDF or an attachment. Course
+  material stays behind the lesson's own access check, so picking a paid
+  course's PDF for a public gallery cannot republish the course.
+
+Response headers and `Range` handling are identical to the lesson stream above,
+and it shares the same rate-limit bucket.
 
 ### Content
 

@@ -209,11 +209,19 @@ Here is the full path for a new CMS section type, which touches most layers:
 
 1. `packages/types/src/enums.ts` — add to `SECTION_TYPES`
 2. `apps/api/prisma/schema.prisma` — add to the `SectionType` enum, then
-   `npm run db:push`
-3. `apps/web/src/components/sections/blocks.tsx` — write the component
+   `npm run db:push` (a deployed database needs a migration: one
+   `ALTER TYPE "SectionType" ADD VALUE`, as in the PDF gallery's)
+3. `apps/web/src/components/sections/blocks.tsx` — write the component. A
+   section that needs client state gets its own module instead, so `blocks.tsx`
+   stays out of the browser bundle — see `pdf-gallery-section.tsx`, which keeps
+   the shell on the server and hands only the grid to the client
 4. `apps/web/src/components/sections/registry.tsx` — register it
 5. `apps/web/src/components/admin/section-editor.tsx` — add a form branch
 6. `page-builder.tsx` — add a label to `SECTION_LABELS`
+
+Section `content` is an open JSON record, so none of this needs a data
+migration and every page authored before the new type keeps rendering. Read it
+back defensively — a malformed item should disappear, not throw.
 
 The other common paths:
 

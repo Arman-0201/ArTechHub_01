@@ -7,6 +7,7 @@ import { SECTION_TYPES } from '@academy/types';
 import { api, useApiMutation, useApiResource } from '@/lib/api/hooks';
 import { localePath } from '@/lib/i18n/config';
 import { cn } from '@/lib/utils';
+import { readPdfGalleryItems } from '@/lib/pdf-gallery';
 import { Alert, Badge, Button, Card, Checkbox, Input, Select } from '@/components/ui';
 import { AdminPageHeader, ConfirmDialog, Modal } from './primitives';
 import { SortableList } from './sortable-list';
@@ -150,12 +151,32 @@ const SECTION_LABELS: Record<string, string> = {
   CAROUSEL: 'Carousel',
   LOGO_CAROUSEL: 'Logo strip',
   VIDEO: 'Video',
+  PDF_GALLERY: 'PDF gallery',
   NEWSLETTER: 'Newsletter',
   TEAM: 'Team',
   INSTRUCTOR_LIST: 'Instructors',
   BLOG_GRID: 'Article grid',
   HTML: 'Custom HTML',
 };
+
+/**
+ * The second line of a section row.
+ *
+ * A heading identifies most sections. A gallery often has none — the grid is
+ * the content — so it says how much it holds instead, which is the thing an
+ * editor scanning the list actually wants to know.
+ */
+function sectionSummary(section: PageSectionDto): string {
+  const title = typeof section.content.title === 'string' ? section.content.title.trim() : '';
+  if (title) return title;
+
+  if (section.type === 'PDF_GALLERY') {
+    const count = readPdfGalleryItems(section.content).length;
+    return count === 0 ? 'No documents yet' : `${count} document${count === 1 ? '' : 's'}`;
+  }
+
+  return 'No heading';
+}
 
 function SectionsTab({ page }: { page: PageDto }) {
   const [adding, setAdding] = useState(false);
@@ -238,11 +259,7 @@ function SectionsTab({ page }: { page: PageDto }) {
                 >
                   {SECTION_LABELS[section.type] ?? section.type}
                 </p>
-                <p className="truncate text-2xs text-text-muted">
-                  {typeof section.content.title === 'string' && section.content.title
-                    ? section.content.title
-                    : 'No heading'}
-                </p>
+                <p className="truncate text-2xs text-text-muted">{sectionSummary(section)}</p>
               </div>
 
               <div className="flex shrink-0 gap-0.5">
