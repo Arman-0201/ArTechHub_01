@@ -5,3 +5,4 @@ export * from './i18n.js';
 export * from './features.js';
 export * from './content.js';
 export * from './domain.js';
+export * from './realtime.js';

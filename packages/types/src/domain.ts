@@ -199,9 +199,31 @@ export interface LessonDetailDto {
   attachments: LessonAttachmentDto[];
   /** Original source PDF, kept downloadable after a PDF import. */
   sourcePdfUrl: string | null;
+  /**
+   * In-page PDF reader source. Null when the lesson has no source PDF or when
+   * the `PDF_READER_ENABLED` feature is off — the same decision the stream
+   * endpoint enforces, surfaced early so the client never renders a reader that
+   * would only 404.
+   */
+  pdfReader: LessonPdfReaderDto | null;
   previousLessonId: string | null;
   nextLessonId: string | null;
   progress: LessonProgressDto | null;
+}
+
+/**
+ * Everything the browser reader needs before it opens a document.
+ *
+ * `url` is an access-controlled stream on the API, not the object-storage URL:
+ * the bytes are only served to a viewer who may read the lesson, and they are
+ * served with range support so pdf.js can render page one while the rest is
+ * still arriving. `sizeBytes` lets the reader show real progress instead of an
+ * indeterminate spinner.
+ */
+export interface LessonPdfReaderDto {
+  url: string;
+  fileName: string;
+  sizeBytes: number;
 }
 
 /* ------------------------------------------------------------------ progress */

@@ -17,6 +17,7 @@ export const FEATURE_KEYS = {
   CERTIFICATES: 'CERTIFICATES_ENABLED',
   SEARCH: 'SEARCH_ENABLED',
   CONTACT_FORM: 'CONTACT_FORM_ENABLED',
+  PDF_READER: 'PDF_READER_ENABLED',
 } as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[keyof typeof FEATURE_KEYS];
@@ -43,6 +44,14 @@ export const FEATURE_DEFINITIONS: FeatureDefinition[] = [
   { key: FEATURE_KEYS.CERTIFICATES, label: 'Certificates', description: 'Issue completion certificates.', defaultEnabled: false, routes: [] },
   { key: FEATURE_KEYS.SEARCH, label: 'Search', description: 'Site-wide search page and API.', defaultEnabled: true, routes: ['/search'] },
   { key: FEATURE_KEYS.CONTACT_FORM, label: 'Contact form', description: 'Public contact form submissions.', defaultEnabled: true, routes: ['/contact'] },
+  {
+    key: FEATURE_KEYS.PDF_READER,
+    label: 'PDF reader',
+    description:
+      'Read a lesson source PDF in the browser, streamed page by page. Off, the PDF stays downloadable but the in-page reader disappears and the stream endpoint answers 404.',
+    defaultEnabled: true,
+    routes: [],
+  },
 ];
 
 export type FeatureFlagMap = Record<string, boolean>;

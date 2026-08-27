@@ -188,6 +188,82 @@ passed down as props.
 
 ---
 
+## Live admin data
+
+The admin panel is a set of screens people leave open while other people change
+the same records. A WebSocket keeps them honest.
+
+```
+admin edits a course
+  -> admin route handler                 (validates, writes, audits)
+  -> recordAudit()                       (one hook, every module)
+  -> broadcastChange({resources:[...]})  (in-process registry of sockets)
+  -> each admin browser                  (invalidate matching query keys)
+  -> the screens refetch through the normal authorised endpoints
+```
+
+Four decisions carry the design.
+
+**The audit trail is the source.** Every deliberate administrative change
+already passes through `recordAudit`, so hooking it there means no module has to
+remember to notify anyone, and an action worth recording is exactly an action
+other admins want to see. `realtime/events.ts` maps the action prefix to the
+screens it moves — `lesson.updated` moves the course list, and every action also
+moves the audit log and the dashboard.
+
+**Events name, they do not carry.** A change notice says which resources went
+stale; the client refetches through the endpoint it always used. The socket can
+therefore never become a second read path that skips a permission check, and a
+screen with no live feed behaves exactly as it did before. The resource list is
+narrowed per subscriber, so an editor without `users.read` is never told a user
+changed.
+
+**The socket is bound to its token.** It authenticates once, at the handshake,
+using the same resolver an HTTP request uses — permissions read from the
+database, not from the token. It then closes when that token expires, so
+revoking a role cannot leave a live feed running until the tab closes.
+
+**The registry is in-process.** With more than one API instance, a change made
+on instance A does not reach an admin connected to instance B, and those screens
+fall back to refetching on navigation as before. Scaling out means publishing
+`broadcastChange` over Redis pub/sub and subscribing on each instance; no call
+site changes. This is the same trade-off the in-memory rate limiter makes.
+
+On the browser side, `RealtimeProvider` is mounted by `AdminShell`, so a socket
+exists only while the panel is open. It invalidates TanStack Query keys by
+prefix — the same mechanism `useApiMutation` uses after a write — and calls
+`router.refresh()` at most once every two seconds for the admin screens that are
+Server Components.
+
+---
+
+## Reading PDFs in place
+
+A lesson imported from a PDF keeps the original. Two different things can be
+done with it, and the platform does both.
+
+**Import** (`content/pdf-import.service.ts`) converts the document to rich text
+once, at admin time, so the lesson reads like the rest of the site.
+
+**Reading** streams the original to a pdf.js reader in the lesson page. The
+chain is short and every link is deliberate:
+
+| Piece | Why it is there |
+| ----- | --------------- |
+| `lib/storage.ts` `openObjectStream` | A slice, as a stream. Buffering a 60MB textbook per reader is how an API runs out of memory |
+| `lib/range.ts` | Parses `Range`, answers 206/416, streams without buffering |
+| `requireFeature(PDF_READER)` | The admin panel can withdraw in-browser reading platform-wide |
+| `getLessonPdfSource` | The same access check as the lesson body, not a lighter one |
+| The web proxy | Keeps the request same-origin, so the session cookie authorises it and no token has to be threaded into pdf.js |
+
+pdf.js reads the trailer with a suffix range, then pulls only the pages being
+looked at. That is why a large document opens as fast as a small one — and why
+the endpoint has a rate limit of its own: one open document is one logical read
+spread over dozens of requests, which would otherwise exhaust the global
+allowance for everything else the same visitor does.
+
+---
+
 ## The two rendering engines
 
 Two registries turn stored data into UI. Both are closed by design — neither
@@ -274,6 +350,12 @@ control; the first two are consequences.
 Maintenance mode blocks public traffic while leaving three doors open — the
 health check, the auth routes, and `/admin` — so an operator can always sign in
 and turn it back off.
+
+`PDF_READER_ENABLED` is a worked example of the pattern. Off, the stream route
+404s, the lesson payload stops describing a readable PDF, and the reader is
+never rendered — while `sourcePdfUrl` keeps working, so the document is still
+downloadable. Withdrawing a way of reading is not the same as withdrawing the
+content, and the flag is scoped to the first.
 
 ---
 

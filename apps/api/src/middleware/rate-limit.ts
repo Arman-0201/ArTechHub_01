@@ -29,12 +29,31 @@ function build(options: Partial<Options> & { name: string }) {
   });
 }
 
+/** A document stream is one logical read spread over many HTTP requests. */
+const isRangeStreamPath = (req: Request) => req.method === 'GET' && req.path.endsWith('/pdf');
+
 /** Broad ceiling applied to the whole API to blunt scraping and floods. */
 export const globalLimiter = build({
   name: 'global',
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.RATE_LIMIT_MAX,
-  skip: (req: Request) => req.method === 'OPTIONS' || req.path === '/health',
+  skip: (req: Request) =>
+    req.method === 'OPTIONS' || req.path === '/health' || isRangeStreamPath(req),
+});
+
+/**
+ * Byte-range document streams.
+ *
+ * Opening one PDF in the reader produces dozens of requests — that is how
+ * progressive rendering works — so these are counted against a limit of their
+ * own rather than the global one, which a single reader would otherwise
+ * exhaust for every other call the same visitor makes. The ceiling is sized for
+ * a person reading documents, not for someone enumerating them.
+ */
+export const pdfStreamLimiter = build({
+  name: 'content.pdf-stream',
+  windowMs: 5 * 60 * 1000,
+  limit: 600,
 });
 
 /**

@@ -41,6 +41,15 @@ function resolveApiOrigin() {
 const apiOrigin = resolveApiOrigin();
 
 /**
+ * The same origin as a WebSocket scheme, for `connect-src`.
+ *
+ * CSP Level 3 says an `https:` source expression also matches `wss:`, and
+ * browsers implement it — but the rule is subtle enough that an explicit entry
+ * is worth the twelve characters. The admin panel's live feed connects here.
+ */
+const apiWebSocketOrigin = apiOrigin.replace(/^http/, 'ws');
+
+/**
  * Content Security Policy.
  *
  * The tight directives are the ones that matter: `object-src 'none'` and
@@ -62,8 +71,12 @@ function buildCsp() {
     "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data: blob: https:",
     "media-src 'self' https:",
-    `connect-src 'self' ${apiOrigin}${isDev ? ' ws: wss:' : ''}`,
+    `connect-src 'self' ${apiOrigin} ${apiWebSocketOrigin}${isDev ? ' ws: wss:' : ''}`,
     "frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com",
+    // pdf.js renders in a worker, bundled and served from this origin. `blob:`
+    // covers its fallback path, which wraps the worker script in a blob URL
+    // when the module worker cannot be constructed directly.
+    "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

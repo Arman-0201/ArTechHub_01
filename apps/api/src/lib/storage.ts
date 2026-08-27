@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { Readable } from 'node:stream';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { env } from '../config/env.js';
 import { logger } from './logger.js';
@@ -172,6 +174,49 @@ export async function readObject(storageKey: string, driver: string): Promise<Bu
   }
 
   return fs.readFile(path.join(env.uploadsDir, storageKey));
+}
+
+/** Half-open byte interval, inclusive at both ends, as HTTP ranges are. */
+export interface ByteRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Opens a stored object as a stream, optionally a byte range of it.
+ *
+ * `readObject` above buffers the whole object, which is right for a PDF the
+ * importer is about to parse and wrong for one a learner is reading: a 60MB
+ * textbook would be held in memory per concurrent reader, and the first page
+ * could not render until the last byte arrived. Streaming a range lets the
+ * browser render page one while the rest is still in flight, and keeps the
+ * API's memory flat regardless of file size.
+ */
+export async function openObjectStream(
+  storageKey: string,
+  driver: string,
+  range?: ByteRange,
+): Promise<Readable> {
+  assertSafeKey(storageKey);
+
+  if (driver === 's3') {
+    if (!env.S3_BUCKET) throw new Error('S3_BUCKET is not configured');
+    const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const response = await getS3Client().send(
+      new GetObjectCommand({
+        Bucket: env.S3_BUCKET,
+        Key: storageKey,
+        ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
+      }),
+    );
+    if (!response.Body) throw new Error(`Empty body for storage key: ${storageKey}`);
+    return response.Body as Readable;
+  }
+
+  return createReadStream(
+    path.join(env.uploadsDir, storageKey),
+    range ? { start: range.start, end: range.end } : undefined,
+  );
 }
 
 export async function ensureLocalStorageReady(): Promise<void> {

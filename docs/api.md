@@ -183,6 +183,7 @@ absent from an anonymous response entirely.
 | GET    | `/courses/featured`                     | Featured courses                   |
 | GET    | `/courses/:slug`                        | Course detail with curriculum      |
 | GET    | `/courses/:slug/lessons/:lessonSlug`    | Lesson content (access-checked)    |
+| GET    | `/courses/:slug/lessons/:lessonSlug/pdf` | Lesson PDF, streamed (access-checked) |
 | GET    | `/instructors`                          | Instructor directory               |
 | GET    | `/instructors/:slug`                    | Profile plus their courses         |
 
@@ -198,6 +199,49 @@ enrollment state, progress percentage and the lesson to resume at.
 enrolled with an active, unexpired enrollment, or the viewer holds
 `courses.update` (staff preview). Otherwise: 403 when signed in, 403 when
 anonymous, 404 when the course is not published.
+
+#### The lesson PDF stream — requires `PDF_READER_ENABLED`
+
+`GET /courses/:slug/lessons/:lessonSlug/pdf` serves the bytes behind the
+in-browser reader. It runs the **same access check as the lesson body**: gating
+the lesson while leaving its PDF open to anyone holding the URL would be no gate
+at all. It answers 404 when the lesson has no source PDF, and 404 when the
+feature is switched off in the admin panel.
+
+Unlike the object-storage URL in `sourcePdfUrl`, this endpoint is
+per-viewer and never cacheable:
+
+| Header                | Value                                            |
+| --------------------- | ------------------------------------------------ |
+| `Accept-Ranges`       | `bytes`                                          |
+| `Content-Range`       | on a 206, `bytes <start>-<end>/<size>`           |
+| `Cache-Control`       | `private, no-store`                              |
+| `Content-Disposition` | `inline`, with an RFC 6266 filename              |
+
+`Range` is honoured for a single interval; a suffix range (`bytes=-1024`) works,
+and an unsatisfiable one answers 416 with `Content-Range: bytes */<size>`. A
+multi-range request is answered with the whole body rather than a
+`multipart/byteranges` response. This is what lets pdf.js read the trailer and
+render page one without downloading the file first — see
+[architecture.md](architecture.md#reading-pdfs-in-place).
+
+The lesson payload advertises the stream only when it will actually serve:
+
+```json
+"pdfReader": {
+  "url": "/api/v1/courses/<slug>/lessons/<lessonSlug>/pdf",
+  "fileName": "networking-primer.pdf",
+  "sizeBytes": 4194304
+}
+```
+
+It is `null` when the lesson has no source PDF or when `PDF_READER_ENABLED` is
+off, so a client never renders a reader that would only 404. `sourcePdfUrl` is
+unaffected by the flag: the original stays downloadable either way.
+
+Because one open document issues many range requests, this path is excluded from
+the global rate limit and counted against its own — see
+[security.md](security.md#rate-limiting).
 
 ### Content
 
@@ -413,6 +457,67 @@ anything still references the file.
 | GET/POST/PATCH/DELETE | `/admin/products/...` | `products.read` / `products.manage` |
 | GET    | `/admin/orders`, `/admin/orders/:id` | `orders.read`   |
 | PUT    | `/admin/orders/:id/status`    | `orders.manage`        |
+
+---
+
+## Realtime — `/realtime`
+
+A WebSocket carrying admin change notices. `GET /api/v1/realtime` accepts an
+HTTP upgrade; it is not an Express route and does not answer ordinary requests.
+
+**Handshake.** A browser `WebSocket` cannot set headers, so the access token
+travels as a subprotocol token rather than in the query string, where it would
+reach every access log on the way:
+
+```js
+new WebSocket('wss://api.example.com/api/v1/realtime', [
+  'academy.v1',
+  `bearer.${accessToken}`,
+]);
+```
+
+The server echoes back `academy.v1` only. It rejects the upgrade with a plain
+HTTP status rather than opening a socket first:
+
+| Status | Reason                                                        |
+| ------ | ------------------------------------------------------------- |
+| 401    | No token, an invalid one, or an account that cannot sign in   |
+| 403    | `Origin` not in the CORS allowlist, or no admin permission     |
+| 429    | More than six sockets already open for the account            |
+| 404    | Any path other than `/api/v1/realtime`                        |
+
+**Messages.** The server sends JSON; the client only ever answers `{"type":"pong"}`.
+
+```jsonc
+// once, on connect
+{ "type": "ready", "resources": ["courses", "audit"],
+  "sessionExpiresAt": "2026-01-01T12:15:00.000Z", "serverTime": "…" }
+
+// every 30s; answer with {"type":"pong"} or be disconnected
+{ "type": "ping", "at": "…" }
+
+// when something changed
+{ "type": "resource.changed", "resources": ["courses", "audit", "overview"],
+  "action": "course.updated", "targetType": "course", "targetId": "…",
+  "actor": { "id": "…", "name": "Sona" }, "at": "…" }
+```
+
+**An event never carries the changed record.** It names the resources whose
+screens are now stale, and the client refetches through the ordinary authorised
+endpoint. A socket therefore cannot become a second read path that skips a
+permission check, and `resources` is filtered per subscriber — an editor without
+`users.read` is not told that a user changed.
+
+**Close codes** are application-defined above 4000:
+
+| Code | Meaning                                                          |
+| ---- | ---------------------------------------------------------------- |
+| 4440 | The access token behind the socket expired. Refresh and reconnect |
+| 4503 | The API is shutting down. Reconnect; not an error                 |
+| 4403 | The account may not use the feed. Do not retry                    |
+
+The socket never outlives the token it presented, which is what keeps a revoked
+role from holding a live feed open until the tab closes.
 
 ---
 

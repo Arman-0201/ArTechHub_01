@@ -65,6 +65,7 @@ export function Providers({
 }
 
 export { ThemeScript };
+export { RealtimeProvider, useRealtime } from './realtime-provider';
 export { useSite, useTranslate, useLocaleHref } from './site-provider';
 export { useAuth } from './auth-provider';
 export { useTheme } from './theme-provider';

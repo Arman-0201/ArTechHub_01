@@ -480,6 +480,62 @@
     max-width: 44rem;
   }
 
+  /*
+   * PDF text layer.
+   *
+   * pdf.js draws a page to a canvas and then lays transparent, absolutely
+   * positioned text on top of it, one span per run, so the words can be
+   * selected, copied and found with the browser's own search. Without these
+   * rules the spans stack in the top-left corner as visible black text over the
+   * rendered page. Positions come from `--scale-factor`, which the reader sets
+   * on each page wrapper.
+   *
+   * Transcribed from `pdfjs-dist/web/pdf_viewer.css` rather than imported: that
+   * stylesheet also carries the annotation, editor and toolbar layers of the
+   * full viewer, none of which this reader uses.
+   */
+  .textLayer {
+    position: absolute;
+    inset: 0;
+    overflow: clip;
+    line-height: 1;
+    text-align: initial;
+    text-size-adjust: none;
+    forced-color-adjust: none;
+    transform-origin: 0 0;
+    caret-color: CanvasText;
+    z-index: 0;
+  }
+
+  .textLayer :is(span, br) {
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    color: transparent;
+    transform-origin: 0 0;
+  }
+
+  .textLayer ::selection {
+    background: color-mix(in srgb, var(--color-primary) 30%, transparent);
+  }
+
+  .textLayer br::selection {
+    background: transparent;
+  }
+
+  /*
+   * pdf.js appends this sentinel so a selection dragged past the last line
+   * stops at the end of the page instead of running away down the document.
+   */
+  .textLayer .endOfContent {
+    display: block;
+    position: absolute;
+    inset: 100% 0 0;
+    z-index: -1;
+    cursor: default;
+    user-select: none;
+  }
+
   /* Loading placeholder that reads as "content is coming", not as a broken box. */
   .skeleton {
     background: linear-gradient(

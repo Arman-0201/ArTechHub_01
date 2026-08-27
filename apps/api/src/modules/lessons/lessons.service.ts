@@ -1,11 +1,13 @@
 import type { Prisma } from '@prisma/client';
 import type { LessonDetailDto, ModuleSummaryDto, RichTextDocument } from '@academy/types';
+import { FEATURE_KEYS } from '@academy/types';
 import { jsonOrDbNull, prisma } from '../../lib/prisma.js';
 import { AuthorizationError, BadRequestError, NotFoundError } from '../../lib/errors.js';
 import { uniqueSlug } from '../../lib/slug.js';
 import { resolveMediaUrl } from '../media/media.helpers.js';
 import { applyTranslation, pickTranslation } from '../translations/translation.helpers.js';
 import { recalculateCourseAggregates } from '../courses/courses.service.js';
+import { isFeatureEnabled } from '../feature-flags/feature-flags.service.js';
 
 /* --------------------------------------------------------------- modules */
 
@@ -108,7 +110,17 @@ const lessonDetailSelect = {
   isPublished: true,
   moduleId: true,
   videoPoster: { select: { url: true, storageKey: true, storageDriver: true } },
-  sourcePdf: { select: { url: true, storageKey: true, storageDriver: true } },
+  sourcePdf: {
+    select: {
+      url: true,
+      storageKey: true,
+      storageDriver: true,
+      mimeType: true,
+      sizeBytes: true,
+      originalName: true,
+      fileName: true,
+    },
+  },
   attachments: {
     orderBy: { sortOrder: 'asc' },
     select: {
@@ -204,6 +216,14 @@ async function toLessonDetail(
       sizeBytes: attachment.media.sizeBytes,
     })),
     sourcePdfUrl: lesson.sourcePdf ? resolveMediaUrl(lesson.sourcePdf) : null,
+    pdfReader:
+      lesson.sourcePdf && (await isFeatureEnabled(FEATURE_KEYS.PDF_READER))
+        ? {
+            url: lessonPdfStreamPath(lesson.module.course.slug, lesson.slug),
+            fileName: lesson.sourcePdf.originalName || lesson.sourcePdf.fileName,
+            sizeBytes: lesson.sourcePdf.sizeBytes,
+          }
+        : null,
     previousLessonId: index > 0 ? (order[index - 1]?.id ?? null) : null,
     nextLessonId: index >= 0 && index < order.length - 1 ? (order[index + 1]?.id ?? null) : null,
     progress: progress
@@ -258,6 +278,19 @@ async function assertLessonAccess(
   }
 }
 
+/**
+ * Where the reader fetches the bytes.
+ *
+ * Relative on purpose: the browser calls the web app's own origin, which
+ * forwards to the API (see `app/api/v1/[...path]/route.ts`). That keeps the
+ * session cookie first-party, so the stream authenticates with the same
+ * credential a server render uses and no access token has to be threaded into
+ * pdf.js.
+ */
+function lessonPdfStreamPath(courseSlug: string, lessonSlug: string): string {
+  return `/api/v1/courses/${encodeURIComponent(courseSlug)}/lessons/${encodeURIComponent(lessonSlug)}/pdf`;
+}
+
 export interface GetLessonInput {
   locale: string;
   viewer?: { id: string; canManageCourses: boolean } | undefined;
@@ -296,6 +329,47 @@ export async function getLessonBySlug(
     input.viewer?.id,
     input.viewer?.canManageCourses ?? false,
   );
+}
+
+export interface LessonPdfSource {
+  storageKey: string;
+  storageDriver: string;
+  mimeType: string;
+  sizeBytes: number;
+  fileName: string;
+}
+
+/**
+ * Resolves the bytes behind the in-page reader.
+ *
+ * Runs the identical access check as the lesson body — `assertLessonAccess`,
+ * not a lighter-weight variant. The stream is the content: gating the JSON that
+ * describes a lesson while leaving its PDF open to anyone holding the URL would
+ * be no gate at all. The feature flag is enforced separately, on the route.
+ */
+export async function getLessonPdfSource(
+  courseSlug: string,
+  lessonSlug: string,
+  viewer: { id: string; canManageCourses: boolean } | undefined,
+): Promise<LessonPdfSource> {
+  const lesson = await prisma.lesson.findFirst({
+    where: { slug: lessonSlug, module: { course: { slug: courseSlug, deletedAt: null } } },
+    select: lessonDetailSelect,
+  });
+  if (!lesson) throw new NotFoundError('Lesson');
+
+  await assertLessonAccess(lesson, viewer);
+
+  const pdf = lesson.sourcePdf;
+  if (!pdf) throw new NotFoundError('Lesson PDF');
+
+  return {
+    storageKey: pdf.storageKey,
+    storageDriver: pdf.storageDriver,
+    mimeType: pdf.mimeType,
+    sizeBytes: pdf.sizeBytes,
+    fileName: pdf.originalName || pdf.fileName,
+  };
 }
 
 /* ------------------------------------------------------------- mutations */

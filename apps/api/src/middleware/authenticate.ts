@@ -73,8 +73,17 @@ function buildPrincipal(user: PrincipalRow): AuthenticatedUser {
   };
 }
 
-/** Principal behind a bearer access token. */
-async function resolveFromBearer(token: string): Promise<AuthenticatedUser | null> {
+/**
+ * Principal behind a bearer access token.
+ *
+ * Exported because the WebSocket handshake needs the same resolution as an HTTP
+ * request: the token proves who is asking, and the database says what they may
+ * do right now. A socket that trusted the token's own claims would keep a
+ * revoked role alive until it disconnected.
+ */
+export async function resolvePrincipalFromAccessToken(
+  token: string,
+): Promise<AuthenticatedUser | null> {
   const claims = verifyAccessToken(token);
 
   const user = await prisma.user.findFirst({
@@ -141,7 +150,7 @@ async function resolveFromRefreshCookie(token: string): Promise<AuthenticatedUse
  */
 async function resolveUserFromRequest(req: Request): Promise<AuthenticatedUser | null> {
   const bearer = extractBearerToken(req);
-  if (bearer) return resolveFromBearer(bearer);
+  if (bearer) return resolvePrincipalFromAccessToken(bearer);
 
   if (req.method === 'GET' || req.method === 'HEAD') {
     const refresh = readRefreshCookie(req.cookies);

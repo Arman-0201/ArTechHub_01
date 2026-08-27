@@ -3,6 +3,7 @@ import type { AuditLogDto, PaginatedResult } from '@academy/types';
 import { jsonOrDbNull, prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import { buildPaginationMeta, getClientIp, getUserAgent, toSkipTake } from '../../lib/http.js';
+import { announceAuditedChange } from '../../realtime/events.js';
 
 /**
  * Audit actions.
@@ -88,6 +89,19 @@ export async function recordAudit(req: Request, input: RecordAuditInput): Promis
   } catch (error) {
     logger.error({ err: error, action: input.action }, 'Failed to write audit log entry');
   }
+
+  /**
+   * Tell connected admins, after the write rather than before it: the live feed
+   * says "go and refetch", and it must never point at a change the next read
+   * cannot see. Outside the try/catch above only because it has its own — a
+   * failed broadcast and a failed audit write are independent problems.
+   */
+  announceAuditedChange({
+    action: input.action,
+    targetType: input.targetType ?? null,
+    targetId: input.targetId ?? null,
+    actor: { id: req.user?.id ?? null, name: req.user?.name ?? null },
+  });
 }
 
 interface ListAuditInput {

@@ -5,6 +5,7 @@ import { logger } from './lib/logger.js';
 import { disconnectPrisma, prisma } from './lib/prisma.js';
 import { ensureLocalStorageReady } from './lib/storage.js';
 import { startMaintenanceJobs, stopMaintenanceJobs } from './jobs/maintenance.job.js';
+import { attachRealtime, closeRealtime } from './realtime/hub.js';
 
 async function bootstrap(): Promise<void> {
   // Fail fast on a bad database URL rather than serving 500s until someone
@@ -20,6 +21,11 @@ async function bootstrap(): Promise<void> {
     );
   });
 
+  // The realtime hub hangs off the same HTTP server rather than a port of its
+  // own: one origin, one TLS certificate, and the CORS allowlist already
+  // describes who may connect.
+  attachRealtime(server);
+
   startMaintenanceJobs();
 
   /**
@@ -34,6 +40,10 @@ async function bootstrap(): Promise<void> {
     logger.info({ signal }, 'Shutting down');
 
     stopMaintenanceJobs();
+    // Closed before `server.close()`, which waits for open connections: a
+    // WebSocket never closes on its own, so leaving them up would stall the
+    // shutdown until the timeout fires every time.
+    closeRealtime();
 
     const forceExit = setTimeout(() => {
       logger.warn('Forcing shutdown after timeout');

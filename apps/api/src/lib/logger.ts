@@ -72,7 +72,8 @@ export type SecurityEvent =
   | 'auth.oauth.linked'
   | 'authz.denied'
   | 'upload.rejected'
-  | 'ratelimit.tripped';
+  | 'ratelimit.tripped'
+  | 'realtime.origin_rejected';
 
 export function logSecurityEvent(
   event: SecurityEvent,

@@ -15,7 +15,9 @@ import { asyncHandler, getClientIp, ok } from '../lib/http.js';
 import { validateBody, validateParams, validateQuery } from '../middleware/validate.js';
 import { optionalAuth } from '../middleware/authenticate.js';
 import { requireFeature } from '../middleware/feature-gate.js';
-import { publicFormLimiter, searchLimiter } from '../middleware/rate-limit.js';
+import { pdfStreamLimiter, publicFormLimiter, searchLimiter } from '../middleware/rate-limit.js';
+import { sendRangeStream } from '../lib/range.js';
+import { openObjectStream } from '../lib/storage.js';
 import { prisma } from '../lib/prisma.js';
 import { getSiteBootstrap } from '../modules/settings/bootstrap.service.js';
 import { getActiveLanguages, getTranslations } from '../modules/languages/languages.service.js';
@@ -169,6 +171,43 @@ publicRouter.get(
           : undefined,
       }),
     );
+  }),
+);
+
+/**
+ * Lesson PDF stream — what the in-page reader reads from.
+ *
+ * Three gates, in the order a request meets them:
+ *   1. the feature flag, so an operator can withdraw in-browser reading
+ *      platform-wide from the admin panel and have the route stop existing;
+ *   2. the same lesson access check the body goes through, so the bytes are no
+ *      more reachable than the lesson they belong to;
+ *   3. its own rate limit, because one open document legitimately issues many
+ *      range requests and would otherwise eat the global allowance.
+ */
+publicRouter.get(
+  '/courses/:slug/lessons/:lessonSlug/pdf',
+  requireFeature(FEATURE_KEYS.PDF_READER),
+  pdfStreamLimiter,
+  asyncHandler(async (req, res) => {
+    const source = await lessonsService.getLessonPdfSource(
+      req.params.slug!,
+      req.params.lessonSlug!,
+      req.user
+        ? {
+            id: req.user.id,
+            canManageCourses:
+              req.user.isSuperAdmin || req.user.permissions.has(PERMISSIONS.COURSES_UPDATE),
+          }
+        : undefined,
+    );
+
+    await sendRangeStream(req, res, {
+      sizeBytes: source.sizeBytes,
+      mimeType: source.mimeType,
+      fileName: source.fileName,
+      open: (range) => openObjectStream(source.storageKey, source.storageDriver, range),
+    });
   }),
 );
 

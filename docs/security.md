@@ -237,6 +237,69 @@ cannot read them.
 
 ---
 
+## Serving lesson PDFs
+
+The in-browser reader streams from `/courses/:slug/lessons/:lessonSlug/pdf`
+rather than the object-storage URL, and the difference is the point:
+
+- **The same access check as the lesson body.** `getLessonPdfSource` calls
+  `assertLessonAccess`, not a lighter variant. Gating the JSON that describes a
+  lesson while leaving its PDF readable by anyone holding the URL would be no
+  gate at all.
+- **Not cacheable.** `Cache-Control: private, no-store` keeps per-viewer,
+  access-controlled bytes out of shared caches and off the browser's disk.
+- **Not sniffable, not scriptable.** `X-Content-Type-Options: nosniff` and a
+  per-response `Content-Security-Policy: default-src 'none'; sandbox`, matching
+  what the local uploads handler already sets for user content. A response CSP
+  only binds when a browser treats the bytes as a document — which is exactly
+  the case worth neutering for a file the platform did not author.
+- **Path-safe.** The storage key is validated against a strict pattern before
+  any read, the same check every other storage operation makes, so a crafted key
+  cannot escape the upload root.
+- **Streamed, never buffered.** A large document costs a stream, not its size in
+  resident memory per concurrent reader.
+
+pdf.js runs with `isEvalSupported: false` and `enableXfa: false`. Neither is
+needed to read a document, and both are attack surface in a file an
+administrator uploaded rather than the platform authored.
+
+`sourcePdfUrl` — the plain download link — is unchanged and still points at
+storage. Switching `PDF_READER_ENABLED` off closes the stream route, not the
+download.
+
+---
+
+## The realtime socket
+
+WebSockets sit outside most of the machinery above, so each protection is
+re-established explicitly:
+
+- **The same-origin policy does not apply.** Any page on any site can open a
+  socket to the endpoint, so the handshake checks `Origin` against the CORS
+  allowlist — the only thing between a hostile page and a socket opened with a
+  visitor's credentials. A missing `Origin` (a non-browser client) still has to
+  present a valid token.
+- **The credential is not in the URL.** A browser `WebSocket` cannot set an
+  `Authorization` header, and a token in the query string is written to every
+  access log and proxy trace in the path. It travels as a subprotocol token
+  instead, and the server echoes back only `academy.v1`, never the credential.
+- **Authorisation is read from the database, not the token.** The handshake uses
+  the same resolver an HTTP request uses, so permissions are current at connect
+  time. The socket then closes when the access token expires (code 4440), which
+  is what stops a revoked role from holding a live feed open until the tab
+  closes.
+- **It is a notification channel, not a data or command channel.** Events name
+  which resources changed and never carry a record, so the socket cannot become
+  a read path that skips a permission check; the resource list is filtered per
+  subscriber. The only message the server accepts is `{"type":"pong"}`, capped
+  at 4KB — every write still goes through the HTTP API with its validation,
+  rate limits and audit trail intact.
+- **Bounded.** Six sockets per account, a 30-second heartbeat that terminates
+  silent peers, and a 512KB per-socket send buffer past which the connection is
+  dropped rather than allowed to grow.
+
+---
+
 ## CSRF
 
 The API is token-authenticated: an ordinary request needs an `Authorization`
@@ -292,9 +355,17 @@ cannot silently break a course page.
 | Upload              | 1h     | 100   | IP                                       |
 | Public forms        | 1h     | 10    | IP                                       |
 | Search              | 1m     | 60    | IP                                       |
+| Lesson PDF stream   | 5m     | 600   | IP                                       |
 
 Login is keyed on IP **and** email so that one attacker cannot lock out a
 victim's account from many IPs, and one IP cannot spray many accounts.
+
+The PDF stream is **excluded from the global limit** and counted against its own.
+One open document is a single logical read spread over dozens of byte-range
+requests — that is how progressive rendering works — and counting them globally
+would let one reader exhaust the allowance for every other call the same visitor
+makes. The dedicated ceiling is sized for a person reading documents, not for
+someone enumerating them.
 
 **Limitation:** the store is in-process. This is correct for a single instance
 and for development. A multi-instance deployment multiplies every limit by the

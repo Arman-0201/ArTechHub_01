@@ -73,6 +73,21 @@ const STRIP_FROM_RESPONSE = new Set([
 ]);
 
 /**
+ * `content-length` is stripped above because `fetch` transparently decodes a
+ * compressed body while leaving the headers that described the compressed one
+ * in place, so the count no longer matches the bytes.
+ *
+ * When nothing was encoded, the count is exact and worth forwarding. The PDF
+ * reader is why it matters: pdf.js decides whether it can request byte ranges
+ * from the length of the first response, and without one it falls back to
+ * pulling the whole document before rendering page one. PDFs are not on the
+ * compressible list, so this branch is the one they take.
+ */
+function shouldForwardContentLength(upstream: Response): boolean {
+  return !upstream.headers.has('content-encoding');
+}
+
+/**
  * Rebinds a cookie from the API's host to this one.
  *
  * `Domain` always goes: the attribute names the API's host, which the browser
@@ -169,8 +184,14 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   }
 
   const responseHeaders = new Headers();
+  const keepContentLength = shouldForwardContentLength(upstream);
   upstream.headers.forEach((value, key) => {
-    if (!STRIP_FROM_RESPONSE.has(key.toLowerCase())) responseHeaders.set(key, value);
+    const name = key.toLowerCase();
+    if (name === 'content-length' && keepContentLength) {
+      responseHeaders.set(key, value);
+      return;
+    }
+    if (!STRIP_FROM_RESPONSE.has(name)) responseHeaders.set(key, value);
   });
 
   const secure = isSecureRequest(request);

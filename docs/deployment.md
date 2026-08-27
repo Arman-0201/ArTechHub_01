@@ -24,6 +24,19 @@ That makes the hostnames the platforms hand out — `*.vercel.app` paired with
 A shared parent domain is still the better topology, and OAuth needs it: the
 provider's callback lands on the API host directly, bypassing the proxy.
 
+**One call does not take that hop: the admin realtime socket.** A Next route
+handler answers requests; it cannot hand over an HTTP upgrade, so the browser
+opens `wss://<api host>/api/v1/realtime` directly. Two consequences for a
+deployment:
+
+- `NEXT_PUBLIC_API_URL` must be the API's real public origin — the socket URL is
+  built from it, and it is baked in at build time.
+- `CORS_ORIGINS` must list the web origin. The handshake checks `Origin` against
+  that allowlist, and unlike ordinary API calls this request *does* carry one.
+
+If the socket cannot connect, the admin panel says so in its sidebar and keeps
+working — screens refetch on navigation, as they did before the feed existed.
+
 | Role | Host |
 | ---- | ---- |
 | Web app | `example.com` |
@@ -154,10 +167,14 @@ https://api.example.com/api/v1/auth/oauth/github/callback
 4. Sign in as the owner, then navigate to `/en/dashboard`: it renders instead
    of bouncing to `/login`. This is the check that the session cookie reached
    the Next server.
-5. `/en/admin` renders.
-6. Admin → Media → upload a file; it loads from the S3 public URL.
-7. Register a new address; the verification email arrives.
-8. Repeat 4 in Safari, which is strictest about cross-site cookies.
+5. `/en/admin` renders, and its sidebar reads **Live** rather than *Offline*.
+   Offline means the WebSocket could not reach the API: check
+   `NEXT_PUBLIC_API_URL` and that `CORS_ORIGINS` lists the web origin.
+6. Admin → Features → toggle something with the panel open in a second browser;
+   the second one updates without a reload.
+7. Admin → Media → upload a file; it loads from the S3 public URL.
+8. Register a new address; the verification email arrives.
+9. Repeat 4 in Safari, which is strictest about cross-site cookies.
 
 ## Notes
 
@@ -169,3 +186,13 @@ https://api.example.com/api/v1/auth/oauth/github/callback
   set, or npm defaults to `omit=dev` and strips the Prisma CLI, TypeScript and
   tsx — leaving nothing to build or seed with. Both `render.yaml` and
   `apps/web/vercel.json` pass it.
+- The realtime hub is in-process. Running more than one API instance means an
+  admin connected to instance A is not told about a change made on instance B —
+  the same trade-off the in-memory rate limiter makes. Scaling out means
+  publishing `broadcastChange` over Redis pub/sub; see
+  [architecture.md](architecture.md#live-admin-data). Nothing breaks in the
+  meantime; those screens simply refresh on navigation.
+- A proxy or load balancer in front of the API must forward WebSocket upgrades
+  and should allow an idle connection to live past its default timeout. The
+  30-second heartbeat keeps the socket busy enough for most defaults, and the
+  client reconnects with backoff regardless.

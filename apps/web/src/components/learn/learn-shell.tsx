@@ -18,6 +18,7 @@ import { cn, formatDuration } from '@/lib/utils';
 import { localePath } from '@/lib/i18n/config';
 import { Button, ProgressBar } from '@/components/ui';
 import { RichText } from '@/components/content/rich-text';
+import { PdfReader } from './pdf-reader';
 import { LessonSidebar } from './lesson-sidebar';
 
 /**
@@ -214,6 +215,34 @@ export function LearnShell({
             ) : null}
 
             <RichText document={lesson.body} />
+
+            {/*
+              * The source document, read in place.
+              *
+              * Below the body rather than instead of it: the imported text is
+              * the version that reads like the rest of the site, and the PDF is
+              * what an admin will check it against or a learner will want when
+              * a diagram did not survive the import. A lesson whose import
+              * produced no body renders nothing above, so the reader lands
+              * directly under the heading, which is the right place for a
+              * lesson that *is* the document.
+              *
+              * `pdfReader` is null whenever the platform will not serve the
+              * bytes — no source PDF, or the feature switched off in the admin
+              * panel — so this is the flag check as well as the content check.
+              */}
+            {lesson.pdfReader ? (
+              <section className="mt-10">
+                <h2 className="mb-3 text-sm font-semibold text-text-primary">
+                  Original document
+                </h2>
+                <PdfReader
+                  pdf={lesson.pdfReader}
+                  lessonId={lesson.id}
+                  downloadUrl={lesson.sourcePdfUrl}
+                />
+              </section>
+            ) : null}
 
             {lesson.attachments.length > 0 || lesson.sourcePdfUrl ? (
               <section className="mt-12 rounded-xl border border-border bg-surface p-5">

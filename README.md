@@ -28,7 +28,11 @@ site-wide search, and an optional shop.
 **Learning** — a curriculum sidebar plus a reading pane using proper long-form
 typography, rather than a document viewer. Progress is stored server-side, so it
 follows the learner between devices. Lessons support rich structured content,
-video, attachments and PDF-derived material.
+video, attachments and PDF-derived material. A lesson that keeps its source PDF
+can also be read in the page: pdf.js streams byte ranges from an
+access-controlled endpoint, so page one renders while the rest is still
+arriving, and the text stays selectable and searchable. The whole reader is
+behind a feature flag an operator switches from the admin panel.
 
 **Accounts** — registration, email verification, OTP, password reset, OAuth
 (Google and GitHub), a student dashboard with real learning statistics, profile
@@ -38,7 +42,10 @@ and preferences, and visible session management.
 editor and PDF import, categories, instructors, enrollments, CMS pages with a
 drag-and-drop section builder, navigation, media library, blog, legal documents,
 languages and translations, SEO, feature flags, settings, products, orders, and
-an audit log.
+an audit log. The panel is live: a WebSocket carries change notices, so a screen
+someone leaves open reflects what other administrators are doing without
+polling or a reload. Events name what changed and never carry the record, so
+every screen still refetches through the endpoint its permissions allow.
 
 **Platform** — eight locales including Armenian and a British English variant,
 feature flags enforced on the server, maintenance mode, structured SEO with
@@ -100,6 +107,7 @@ npm run dev
 | Web app    | http://localhost:3000          |
 | API        | http://localhost:4000          |
 | Health     | http://localhost:4000/health   |
+| Admin live feed | ws://localhost:4000/api/v1/realtime |
 | Prisma Studio | `npm run db:studio`         |
 
 The seed prints the owner account it created:
