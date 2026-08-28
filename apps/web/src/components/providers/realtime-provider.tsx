@@ -60,6 +60,8 @@ const ADMIN_QUERY_PREFIXES: Record<RealtimeResource, string[]> = {
   [REALTIME_RESOURCES.MENUS]: ['/admin/menus', '/admin/footer'],
   [REALTIME_RESOURCES.MEDIA]: ['/admin/media'],
   [REALTIME_RESOURCES.BLOG]: ['/admin/blog'],
+  // Covers the entries list too, which is keyed on the collection's own path.
+  [REALTIME_RESOURCES.COLLECTIONS]: ['/admin/collections'],
   [REALTIME_RESOURCES.LEGAL]: ['/admin/legal'],
   [REALTIME_RESOURCES.PRODUCTS]: ['/admin/products'],
   [REALTIME_RESOURCES.ORDERS]: ['/admin/orders'],

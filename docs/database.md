@@ -147,6 +147,13 @@ different screens cannot overwrite each other's work.
 only meaningful against a specific text, so acceptance points at an immutable
 version.
 
+`Collection` → `CollectionCategory` / `CollectionEntry` back the reference
+encyclopedias. An entry's `facts` and `panels` are JSON rather than side tables:
+they are read only as a whole, always with their entry, and never queried across
+rows, so normalising them would buy joins and cost nothing else. Both are
+validated on write and re-read defensively, so a row authored against a newer
+build cannot break an older renderer.
+
 `AuditLog` is append-only with a nullable actor — `onDelete: SetNull` keeps the
 history after an actor is removed.
 
@@ -163,6 +170,7 @@ Applied only where recovery or history genuinely matters:
 | `Page`     | `deletedAt`             | Accidental deletion of published content        |
 | `Product`  | `deletedAt`             | Past orders must still resolve the product      |
 | `BlogPost` | `deletedAt`             | Same as pages                                   |
+| `Collection` | `deletedAt` + `ARCHIVED` | Its entries are URLs other content links to   |
 
 Everything else is hard-deleted or uses an explicit status. Soft-deleting
 everything is a common mistake: it means every query needs a filter, and one

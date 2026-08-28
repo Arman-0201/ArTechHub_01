@@ -9,9 +9,13 @@ import {
   auditListQuerySchema,
   blogListQuerySchema,
   categoryListQuerySchema,
+  collectionCategorySchema,
+  collectionEntryListQuerySchema,
   courseListQuerySchema,
   createBlogPostSchema,
   createCategorySchema,
+  createCollectionEntrySchema,
+  createCollectionSchema,
   createCourseSchema,
   createInstructorSchema,
   createLessonSchema,
@@ -42,6 +46,8 @@ import {
   sortOrderItemsSchema,
   updateBlogPostSchema,
   updateCategorySchema,
+  updateCollectionEntrySchema,
+  updateCollectionSchema,
   updateCourseSchema,
   updateFeatureFlagSchema,
   updateInstructorSchema,
@@ -71,6 +77,7 @@ import { AUDIT_ACTIONS, listAuditLogs, recordAudit } from '../modules/audit/audi
 import * as usersService from '../modules/users/users.service.js';
 import * as rolesService from '../modules/roles/roles.service.js';
 import * as categoriesService from '../modules/categories/categories.service.js';
+import * as collectionsService from '../modules/collections/collections.service.js';
 import * as coursesService from '../modules/courses/courses.service.js';
 import * as instructorsService from '../modules/courses/instructors.service.js';
 import * as lessonsService from '../modules/lessons/lessons.service.js';
@@ -1111,6 +1118,196 @@ adminRouter.delete(
   requirePermissions(PERMISSIONS.BLOG_MANAGE),
   asyncHandler(async (req, res) => {
     await blogService.deletePost(req.params.id!);
+    noContent(res);
+  }),
+);
+
+/* ----------------------------------------------------- reference collections */
+
+/**
+ * Two levels, and the URLs say which: a collection owns its filters and its
+ * entries, so those are created underneath it, while editing or deleting one
+ * addresses it by its own id. That keeps the nested routes to the two calls
+ * that genuinely need the parent.
+ */
+
+adminRouter.get(
+  '/collections',
+  requirePermissions(PERMISSIONS.COLLECTIONS_READ),
+  asyncHandler(async (_req, res) => ok(res, await collectionsService.listCollections())),
+);
+
+adminRouter.get(
+  '/collections/:id',
+  requirePermissions(PERMISSIONS.COLLECTIONS_READ),
+  asyncHandler(async (req, res) => ok(res, await collectionsService.getCollection(req.params.id!))),
+);
+
+adminRouter.post(
+  '/collections',
+  requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
+  validateBody(createCollectionSchema),
+  asyncHandler(async (req, res) => {
+    const input = req.body as z.infer<typeof createCollectionSchema>;
+    const collection = await collectionsService.createCollection(input as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COLLECTION_CREATED,
+      targetType: 'collection',
+      targetId: collection.id,
+      metadata: { slug: collection.slug },
+    });
+    ok(res, collection, 201);
+  }),
+);
+
+adminRouter.patch(
+  '/collections/:id',
+  requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
+  validateBody(updateCollectionSchema),
+  asyncHandler(async (req, res) => {
+    const input = req.body as z.infer<typeof updateCollectionSchema>;
+    const collection = await collectionsService.updateCollection(req.params.id!, input as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COLLECTION_UPDATED,
+      targetType: 'collection',
+      targetId: collection.id,
+      metadata: { fields: Object.keys(input) },
+    });
+    ok(res, collection);
+  }),
+);
+
+adminRouter.delete(
+  '/collections/:id',
+  requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
+  asyncHandler(async (req, res) => {
+    await collectionsService.deleteCollection(req.params.id!);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COLLECTION_DELETED,
+      targetType: 'collection',
+      targetId: req.params.id!,
+    });
+    noContent(res);
+  }),
+);
+
+adminRouter.post(
+  '/collections/:id/categories',
+  requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
+  validateBody(collectionCategorySchema),
+  asyncHandler(async (req, res) => {
+    const input = req.body as z.infer<typeof collectionCategorySchema>;
+    const category = await collectionsService.createCollectionCategory(
+      req.params.id!,
+      input as never,
+    );
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COLLECTION_UPDATED,
+      targetType: 'collection',
+      targetId: req.params.id!,
+      metadata: { filterAdded: category.slug },
+    });
+    ok(res, category, 201);
+  }),
+);
+
+adminRouter.patch(
+  '/collection-categories/:id',
+  requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
+  validateBody(collectionCategorySchema.partial()),
+  asyncHandler(async (req, res) =>
+    ok(res, await collectionsService.updateCollectionCategory(req.params.id!, req.body as never)),
+  ),
+);
+
+adminRouter.delete(
+  '/collection-categories/:id',
+  requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
+  asyncHandler(async (req, res) => {
+    await collectionsService.deleteCollectionCategory(req.params.id!);
+    noContent(res);
+  }),
+);
+
+adminRouter.get(
+  '/collections/:id/entries',
+  requirePermissions(PERMISSIONS.COLLECTIONS_READ),
+  validateQuery(collectionEntryListQuerySchema),
+  asyncHandler(async (req, res) => {
+    const query = req.query as unknown as z.infer<typeof collectionEntryListQuerySchema>;
+    const result = await collectionsService.listEntries({
+      collectionId: req.params.id!,
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(query.search ? { search: query.search } : {}),
+      ...(query.status ? { status: query.status as never } : {}),
+      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
+    });
+    ok(res, result.items, 200, result.meta);
+  }),
+);
+
+adminRouter.post(
+  '/collections/:id/entries',
+  requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
+  validateBody(createCollectionEntrySchema),
+  asyncHandler(async (req, res) => {
+    const input = req.body as z.infer<typeof createCollectionEntrySchema>;
+    const entry = await collectionsService.createEntry(req.params.id!, input as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COLLECTION_ENTRY_CREATED,
+      targetType: 'collection_entry',
+      targetId: entry.id,
+      metadata: { collectionId: req.params.id, slug: entry.slug },
+    });
+    ok(res, entry, 201);
+  }),
+);
+
+adminRouter.put(
+  '/collections/:id/entries/reorder',
+  requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
+  validateBody(sortOrderItemsSchema),
+  asyncHandler(async (req, res) => {
+    const { items } = req.body as z.infer<typeof sortOrderItemsSchema>;
+    await collectionsService.reorderEntries(items);
+    noContent(res);
+  }),
+);
+
+adminRouter.get(
+  '/collection-entries/:id',
+  requirePermissions(PERMISSIONS.COLLECTIONS_READ),
+  asyncHandler(async (req, res) => ok(res, await collectionsService.getEntry(req.params.id!))),
+);
+
+adminRouter.patch(
+  '/collection-entries/:id',
+  requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
+  validateBody(updateCollectionEntrySchema),
+  asyncHandler(async (req, res) => {
+    const input = req.body as z.infer<typeof updateCollectionEntrySchema>;
+    const entry = await collectionsService.updateEntry(req.params.id!, input as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COLLECTION_ENTRY_UPDATED,
+      targetType: 'collection_entry',
+      targetId: entry.id,
+      metadata: { fields: Object.keys(input) },
+    });
+    ok(res, entry);
+  }),
+);
+
+adminRouter.delete(
+  '/collection-entries/:id',
+  requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
+  asyncHandler(async (req, res) => {
+    await collectionsService.deleteEntry(req.params.id!);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COLLECTION_ENTRY_DELETED,
+      targetType: 'collection_entry',
+      targetId: req.params.id!,
+    });
     noContent(res);
   }),
 );

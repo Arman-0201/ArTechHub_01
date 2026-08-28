@@ -1,4 +1,10 @@
-import type { CategoryDto, CourseCardDto, InstructorDto, PageSectionDto } from '@academy/types';
+import type {
+  CategoryDto,
+  CollectionIndexDto,
+  CourseCardDto,
+  InstructorDto,
+  PageSectionDto,
+} from '@academy/types';
 
 /**
  * Props every section component receives.
@@ -28,6 +34,12 @@ export interface SectionData {
     publishedAt: string | null;
     readingMinutes: number;
   }[];
+  /**
+   * Reference collections a `COLLECTION_GRID` section on this page names,
+   * keyed by slug. Absent when the slug no longer resolves to a published
+   * collection, which the section treats as nothing to render.
+   */
+  collections: Record<string, CollectionIndexDto>;
 }
 
 export function readString(

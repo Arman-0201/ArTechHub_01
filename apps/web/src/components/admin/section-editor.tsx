@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import type { PageSectionDto, RichTextDocument } from '@academy/types';
-import { api, useApiMutation } from '@/lib/api/hooks';
+import type { CollectionDto, PageSectionDto, RichTextDocument } from '@academy/types';
+import { api, useApiList, useApiMutation } from '@/lib/api/hooks';
 import { readPdfGalleryItems, type PdfGalleryItem } from '@/lib/pdf-gallery';
 import { Alert, Button, Checkbox, Input, Select, Textarea } from '@/components/ui';
 import { Modal } from './primitives';
@@ -435,6 +435,58 @@ function SectionFields({ type, content, set, setSetting, settings, text }: Field
         </>
       );
 
+    case 'COLLECTION_GRID':
+      return (
+        <>
+          <CollectionPicker
+            value={text('collectionSlug')}
+            onChange={(collectionSlug) => set({ collectionSlug })}
+          />
+          <Input
+            label="Heading"
+            hint="Leave blank to use the collection's own name."
+            value={text('title')}
+            onChange={(event) => set({ title: event.target.value })}
+          />
+          <Textarea
+            label="Description"
+            rows={2}
+            value={text('description')}
+            onChange={(event) => set({ description: event.target.value })}
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              label="Maximum entries"
+              hint="0 shows every entry, with search and filters."
+              type="number"
+              min={0}
+              max={200}
+              value={numberSetting('limit', 0)}
+              onChange={(event) => setSetting({ limit: Number(event.target.value) || 0 })}
+            />
+            <Select
+              label="Columns"
+              value={String(numberSetting('columns', 3))}
+              onChange={(event) => setSetting({ columns: Number(event.target.value) })}
+              options={[
+                { value: '2', label: '2 columns' },
+                { value: '3', label: '3 columns' },
+                { value: '4', label: '4 columns' },
+              ]}
+            />
+          </div>
+          <Checkbox
+            label="Show the search box"
+            checked={
+              typeof settings.showSearch === 'boolean'
+                ? settings.showSearch
+                : numberSetting('limit', 0) === 0
+            }
+            onChange={(event) => setSetting({ showSearch: event.target.checked })}
+          />
+        </>
+      );
+
     case 'VIDEO':
       return (
         <>
@@ -577,6 +629,51 @@ function SectionFields({ type, content, set, setSetting, settings, text }: Field
         </>
       );
   }
+}
+
+/**
+ * Picks the collection a grid shows, by slug rather than id.
+ *
+ * The slug is what the public URL and the section's own link targets are built
+ * from, so storing it keeps the section readable and means a collection can be
+ * swapped without the stored value becoming an opaque identifier.
+ */
+function CollectionPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (slug: string) => void;
+}) {
+  const collectionsQuery = useApiList<CollectionDto>('/admin/collections', { pageSize: 100 });
+  const collections = collectionsQuery.data?.items ?? [];
+
+  if (collectionsQuery.isLoading) {
+    return <Select label="Collection" value="" onChange={() => undefined} options={[]} disabled />;
+  }
+
+  if (collections.length === 0) {
+    return (
+      <Alert tone="info">
+        No collections yet. Create one under Admin → Collections, then choose it here.
+      </Alert>
+    );
+  }
+
+  return (
+    <Select
+      label="Collection"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      options={[
+        { value: '', label: 'Choose a collection…' },
+        ...collections.map((collection) => ({
+          value: collection.slug,
+          label: `${collection.name} (${collection.entryCount})`,
+        })),
+      ]}
+    />
+  );
 }
 
 function ActionFields({

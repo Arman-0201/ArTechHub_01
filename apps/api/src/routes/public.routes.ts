@@ -9,6 +9,7 @@ import {
   productListQuerySchema,
   searchQuerySchema,
   slugParamSchema,
+  slugSchema,
 } from '@academy/validation';
 import { z } from 'zod';
 import { FEATURE_KEYS } from '@academy/types';
@@ -23,6 +24,7 @@ import { prisma } from '../lib/prisma.js';
 import { getSiteBootstrap } from '../modules/settings/bootstrap.service.js';
 import { getActiveLanguages, getTranslations } from '../modules/languages/languages.service.js';
 import * as categoriesService from '../modules/categories/categories.service.js';
+import * as collectionsService from '../modules/collections/collections.service.js';
 import * as coursesService from '../modules/courses/courses.service.js';
 import * as instructorsService from '../modules/courses/instructors.service.js';
 import * as lessonsService from '../modules/lessons/lessons.service.js';
@@ -304,6 +306,38 @@ publicRouter.get(
   asyncHandler(async (req, res) => {
     ok(res, await blogService.getPostBySlug(req.params.slug!, req.locale));
   }),
+);
+
+/* ----------------------------------------------------- reference collections */
+
+/**
+ * An index returns its entries whole rather than a page at a time.
+ *
+ * The grid searches and filters in the browser — which is what makes typing
+ * feel instant and lets the same component be dropped onto any CMS page — so a
+ * paginated response would only mean the search could not see past page one.
+ * The service caps how many rows that can be.
+ */
+
+publicRouter.get(
+  '/collections',
+  asyncHandler(async (_req, res) => ok(res, await collectionsService.listPublicCollections())),
+);
+
+publicRouter.get(
+  '/collections/:slug',
+  validateParams(slugParamSchema),
+  asyncHandler(async (req, res) =>
+    ok(res, await collectionsService.getPublicCollection(req.params.slug!)),
+  ),
+);
+
+publicRouter.get(
+  '/collections/:slug/entries/:entrySlug',
+  validateParams(z.object({ slug: slugSchema, entrySlug: slugSchema })),
+  asyncHandler(async (req, res) =>
+    ok(res, await collectionsService.getPublicEntry(req.params.slug!, req.params.entrySlug!)),
+  ),
 );
 
 /* ----------------------------------------------------------------- search */

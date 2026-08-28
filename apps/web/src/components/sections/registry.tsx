@@ -26,6 +26,7 @@ import {
 // gallery section imports `SectionShell` from there, and routing it back
 // through the same barrel would close an import cycle for no gain.
 import { PdfGallerySection } from './pdf-gallery-section';
+import { CollectionGridSection } from './collection-grid-section';
 
 /**
  * Section registry.
@@ -59,6 +60,7 @@ const REGISTRY: Partial<Record<SectionType, ComponentType<SectionProps>>> = {
   TEAM: TeamSection,
   INSTRUCTOR_LIST: InstructorListSection,
   BLOG_GRID: BlogGridSection,
+  COLLECTION_GRID: CollectionGridSection,
   HTML: HtmlSection,
 };
 
@@ -72,6 +74,7 @@ export const DATA_DEPENDENT_SECTIONS = {
   categories: ['CATEGORY_GRID'] as const,
   instructors: ['INSTRUCTOR_LIST', 'TEAM'] as const,
   posts: ['BLOG_GRID'] as const,
+  collections: ['COLLECTION_GRID'] as const,
 };
 
 export function PageRenderer({
@@ -99,6 +102,7 @@ export const EMPTY_SECTION_DATA: SectionData = {
   categories: [],
   instructors: [],
   latestPosts: [],
+  collections: {},
 };
 
 export type { SectionData, SectionProps };

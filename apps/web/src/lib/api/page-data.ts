@@ -1,6 +1,12 @@
 import 'server-only';
-import type { PageDto } from '@academy/types';
-import { getBlogPosts, getCategories, getFeaturedCourses, getInstructors } from './queries';
+import type { CollectionIndexDto, PageDto } from '@academy/types';
+import {
+  getBlogPosts,
+  getCategories,
+  getCollection,
+  getFeaturedCourses,
+  getInstructors,
+} from './queries';
 import { EMPTY_SECTION_DATA, type SectionData } from '@/components/sections/registry';
 
 /**
@@ -18,7 +24,24 @@ export async function resolveSectionData(page: PageDto, locale: string): Promise
   const needsInstructors = types.has('INSTRUCTOR_LIST') || types.has('TEAM');
   const needsPosts = types.has('BLOG_GRID');
 
-  if (!needsCourses && !needsCategories && !needsInstructors && !needsPosts) {
+  // Each collection grid names the collection it shows, so the slugs are read
+  // from the sections rather than derived from the type alone.
+  const collectionSlugs = [
+    ...new Set(
+      page.sections
+        .filter((section) => section.type === 'COLLECTION_GRID')
+        .map((section) => section.content.collectionSlug)
+        .filter((slug): slug is string => typeof slug === 'string' && slug.length > 0),
+    ),
+  ];
+
+  if (
+    !needsCourses &&
+    !needsCategories &&
+    !needsInstructors &&
+    !needsPosts &&
+    collectionSlugs.length === 0
+  ) {
     return EMPTY_SECTION_DATA;
   }
 
@@ -30,12 +53,20 @@ export async function resolveSectionData(page: PageDto, locale: string): Promise
       return Math.max(max, typeof limit === 'number' ? limit : 6);
     }, 6);
 
-  const [featuredCourses, categories, instructors, posts] = await Promise.all([
+  const [featuredCourses, categories, instructors, posts, collectionList] = await Promise.all([
     needsCourses ? getFeaturedCourses(locale, courseLimit) : Promise.resolve([]),
     needsCategories ? getCategories(locale) : Promise.resolve([]),
     needsInstructors ? getInstructors(locale) : Promise.resolve([]),
     needsPosts ? getBlogPosts(locale, { pageSize: 6 }) : Promise.resolve({ items: [], meta: undefined }),
+    Promise.all(collectionSlugs.map((slug) => getCollection(slug, locale))),
   ]);
+
+  const collections: Record<string, CollectionIndexDto> = {};
+  for (const index of collectionList) {
+    // A slug that no longer resolves is simply absent; the section renders
+    // nothing rather than the page failing.
+    if (index) collections[index.collection.slug] = index;
+  }
 
   return {
     featuredCourses,
@@ -51,5 +82,6 @@ export async function resolveSectionData(page: PageDto, locale: string): Promise
       publishedAt: post.publishedAt,
       readingMinutes: post.readingMinutes,
     })),
+    collections,
   };
 }

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   ArrowLeft,
+  BookMarked,
   BookOpen,
   ClipboardList,
   FileText,
@@ -93,6 +94,12 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/admin/pages', label: 'Pages', Icon: FileText, permission: PERMISSIONS.PAGES_READ },
       { href: '/admin/menus', label: 'Navigation', Icon: MenuIcon, permission: PERMISSIONS.MENUS_MANAGE },
       { href: '/admin/blog', label: 'Articles', Icon: Newspaper, permission: PERMISSIONS.BLOG_READ },
+      {
+        href: '/admin/collections',
+        label: 'Reference',
+        Icon: BookMarked,
+        permission: PERMISSIONS.COLLECTIONS_READ,
+      },
       { href: '/admin/media', label: 'Media', Icon: ImageIcon, permission: PERMISSIONS.MEDIA_READ },
       { href: '/admin/legal', label: 'Legal', Icon: ScrollText, permission: PERMISSIONS.LEGAL_MANAGE },
     ],

@@ -66,6 +66,31 @@ export const SECTION_TYPES = [
   'TEAM',
   'INSTRUCTOR_LIST',
   'BLOG_GRID',
+  'COLLECTION_GRID',
   'HTML',
 ] as const;
 export type SectionType = (typeof SECTION_TYPES)[number];
+
+/**
+ * What a reference-collection panel holds.
+ *
+ * A detail page is a list of panels rather than free-form rich text, because
+ * the same handful of shapes repeats across every entry — a description, a
+ * checklist of software, a table of vulnerabilities, a column of key/value
+ * facts, a set of related links. Naming them keeps every entry consistent
+ * without an editor rebuilding the layout each time, and each one renders to a
+ * bordered card the author places in the main column or the sidebar.
+ */
+export const COLLECTION_PANEL_KINDS = ['TEXT', 'LIST', 'FACTS', 'TABLE', 'LINKS'] as const;
+export type CollectionPanelKind = (typeof COLLECTION_PANEL_KINDS)[number];
+
+/** Which column a panel is drawn in on an entry's detail page. */
+export const COLLECTION_PANEL_COLUMNS = ['MAIN', 'SIDE'] as const;
+export type CollectionPanelColumn = (typeof COLLECTION_PANEL_COLUMNS)[number];
+
+/**
+ * A panel's accent, and an entry's. Presentation only — it colours a border,
+ * an icon and a badge, and carries no meaning the server acts on.
+ */
+export const COLLECTION_TONES = ['DEFAULT', 'INFO', 'SUCCESS', 'WARNING', 'DANGER'] as const;
+export type CollectionTone = (typeof COLLECTION_TONES)[number];

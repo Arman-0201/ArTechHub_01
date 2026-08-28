@@ -62,7 +62,7 @@ model User {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  avatar             Media?               @relation("UserAvatar", fields: [avatarMediaId], references: [id], onDelete: SetNull)
+  avatar             Media?                @relation("UserAvatar", fields: [avatarMediaId], references: [id], onDelete: SetNull)
   roles              UserRole[]
   authProviders      AuthProvider[]
   refreshTokens      RefreshToken[]
@@ -71,10 +71,10 @@ model User {
   lessonProgress     LessonProgress[]
   courseProgress     CourseProgress[]
   legalAcceptances   UserLegalAcceptance[]
-  auditLogs          AuditLog[]           @relation("AuditActor")
+  auditLogs          AuditLog[]            @relation("AuditActor")
   instructorProfile  Instructor?
   blogPosts          BlogPost[]
-  uploadedMedia      Media[]              @relation("MediaUploader")
+  uploadedMedia      Media[]               @relation("MediaUploader")
   orders             Order[]
   learningDays       LearningDay[]
 
@@ -159,14 +159,14 @@ model AuthProvider {
 model RefreshToken {
   id String @id @default(cuid())
 
-  userId String
+  userId       String
   // Only the SHA-256 of the token is stored: a database leak alone must not
   // yield usable session credentials.
-  tokenHash String   @unique
+  tokenHash    String  @unique
   // Rotation chain. When a token is used, it is revoked and `replacedById`
   // points at its successor — a second use of a revoked token means the chain
   // was stolen, and the whole family is revoked.
-  familyId  String
+  familyId     String
   replacedById String?
 
   userAgent String?
@@ -216,16 +216,16 @@ model VerificationToken {
 // ===========================================================================
 
 model Category {
-  id            String  @id @default(cuid())
-  slug          String  @unique
-  name          String
-  description   String?
-  iconName      String?
-  imageMediaId  String?
-  colorHex      String?
-  parentId      String?
-  sortOrder     Int     @default(0)
-  isActive      Boolean @default(true)
+  id           String  @id @default(cuid())
+  slug         String  @unique
+  name         String
+  description  String?
+  iconName     String?
+  imageMediaId String?
+  colorHex     String?
+  parentId     String?
+  sortOrder    Int     @default(0)
+  isActive     Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -293,16 +293,16 @@ enum CourseAccessType {
 }
 
 model Instructor {
-  id           String  @id @default(cuid())
-  slug         String  @unique
-  userId       String? @unique
-  name         String
-  headline     String?
-  bio          String? @db.Text
+  id            String  @id @default(cuid())
+  slug          String  @unique
+  userId        String? @unique
+  name          String
+  headline      String?
+  bio           String? @db.Text
   avatarMediaId String?
-  links        Json    @default("[]")
-  isActive     Boolean @default(true)
-  sortOrder    Int     @default(0)
+  links         Json    @default("[]")
+  isActive      Boolean @default(true)
+  sortOrder     Int     @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -341,10 +341,10 @@ model Course {
 
   // Denormalised counters kept in sync by the enrollment/lesson services.
   // Reading them avoids a COUNT on every catalogue card render.
-  lessonCount     Int   @default(0)
-  enrollmentCount Int   @default(0)
+  lessonCount     Int    @default(0)
+  enrollmentCount Int    @default(0)
   ratingAverage   Float?
-  ratingCount     Int   @default(0)
+  ratingCount     Int    @default(0)
 
   publishedAt DateTime?
   createdAt   DateTime  @default(now())
@@ -624,15 +624,15 @@ enum PublishStatus {
 }
 
 model Page {
-  id       String        @id @default(cuid())
-  slug     String        @unique
-  title    String
-  status   PublishStatus @default(DRAFT)
-  isEnabled Boolean      @default(true)
+  id        String        @id @default(cuid())
+  slug      String        @unique
+  title     String
+  status    PublishStatus @default(DRAFT)
+  isEnabled Boolean       @default(true)
   // System pages back a hardcoded route (home, about). They can be edited and
   // disabled but never deleted, so the route can always resolve.
-  isSystem Boolean       @default(false)
-  template String        @default("default")
+  isSystem  Boolean       @default(false)
+  template  String        @default("default")
 
   publishedAt DateTime?
   createdAt   DateTime  @default(now())
@@ -680,6 +680,7 @@ enum SectionType {
   TEAM
   INSTRUCTOR_LIST
   BLOG_GRID
+  COLLECTION_GRID
   HTML
 }
 
@@ -812,16 +813,16 @@ model FooterLink {
 }
 
 model BlogPost {
-  id            String        @id @default(cuid())
-  slug          String        @unique
-  title         String
-  excerpt       String?
-  body          Json?
-  coverMediaId  String?
-  authorId      String?
-  status        PublishStatus @default(DRAFT)
-  readingMinutes Int          @default(1)
-  viewCount     Int           @default(0)
+  id             String        @id @default(cuid())
+  slug           String        @unique
+  title          String
+  excerpt        String?
+  body           Json?
+  coverMediaId   String?
+  authorId       String?
+  status         PublishStatus @default(DRAFT)
+  readingMinutes Int           @default(1)
+  viewCount      Int           @default(0)
 
   publishedAt DateTime?
   createdAt   DateTime  @default(now())
@@ -865,6 +866,96 @@ model BlogPostTag {
 }
 
 // ===========================================================================
+// Reference collections
+// ===========================================================================
+
+/// An encyclopedia of many small, similar entries — network ports, protocols,
+/// commands. The index page, its search, its filter chips and every detail
+/// page are rendered from the rows below rather than authored one by one,
+/// which is the difference between adding the hundredth entry and laying out
+/// the hundredth page.
+model Collection {
+  id                String        @id @default(cuid())
+  slug              String        @unique
+  name              String
+  description       String?
+  iconName          String?
+  /// Small label above the heading on the index page.
+  eyebrow           String?
+  searchPlaceholder String?
+  status            PublishStatus @default(DRAFT)
+  sortOrder         Int           @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  categories CollectionCategory[]
+  entries    CollectionEntry[]
+
+  @@index([status, sortOrder])
+  @@map("collections")
+}
+
+/// The filter chips above a collection's grid. Scoped to one collection, so
+/// two collections may both have a "Web" without sharing it.
+model CollectionCategory {
+  id           String @id @default(cuid())
+  collectionId String
+  slug         String
+  name         String
+  sortOrder    Int    @default(0)
+
+  collection Collection        @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  entries    CollectionEntry[]
+
+  @@unique([collectionId, slug])
+  @@index([collectionId, sortOrder])
+  @@map("collection_categories")
+}
+
+model CollectionEntry {
+  id           String  @id @default(cuid())
+  collectionId String
+  categoryId   String?
+
+  slug     String
+  title    String
+  subtitle String?
+  summary  String?
+  /// The small type label on the card — "TCP", "UDP".
+  badge    String?
+  /// Presentation accent, including the red "Dangerous" treatment.
+  tone     String  @default("DEFAULT")
+
+  /// Extra words the index search matches on: aliases, synonyms, old names.
+  keywords String[] @default([])
+  /// Key/value rows for the detail sidebar's summary panel.
+  facts    Json     @default("[]")
+  /// The detail page body: an ordered list of panels, each naming the column
+  /// it sits in and the shape it holds. Validated on the way in
+  /// (`collectionPanelSchema`) and read defensively on the way out, so an
+  /// entry authored against a newer build never breaks an older renderer.
+  panels   Json     @default("[]")
+
+  status     PublishStatus @default(DRAFT)
+  isFeatured Boolean       @default(false)
+  sortOrder  Int           @default(0)
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  collection Collection          @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  category   CollectionCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@unique([collectionId, slug])
+  @@index([collectionId, status, sortOrder])
+  @@index([categoryId])
+  @@map("collection_entries")
+}
+
+// ===========================================================================
 // Media
 // ===========================================================================
 
@@ -877,22 +968,22 @@ enum MediaKind {
 }
 
 model Media {
-  id           String    @id @default(cuid())
-  kind         MediaKind @default(OTHER)
+  id            String    @id @default(cuid())
+  kind          MediaKind @default(OTHER)
   // Server-generated name; the client's original filename is never used as a path.
-  fileName     String
-  originalName String
-  mimeType     String
-  sizeBytes    Int
-  storageKey   String    @unique
-  storageDriver String   @default("local")
-  url          String
-  checksum     String?
-  width        Int?
-  height       Int?
-  altText      String?
-  folder       String?
-  uploadedById String?
+  fileName      String
+  originalName  String
+  mimeType      String
+  sizeBytes     Int
+  storageKey    String    @unique
+  storageDriver String    @default("local")
+  url           String
+  checksum      String?
+  width         Int?
+  height        Int?
+  altText       String?
+  folder        String?
+  uploadedById  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1012,12 +1103,12 @@ enum OrderStatus {
 }
 
 model ProductCategory {
-  id        String  @id @default(cuid())
-  slug      String  @unique
-  name      String
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  name        String
   description String?
-  sortOrder Int     @default(0)
-  isActive  Boolean @default(true)
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1105,15 +1196,15 @@ model Order {
 }
 
 model OrderItem {
-  id        String @id @default(cuid())
-  orderId   String
-  productId String?
+  id             String  @id @default(cuid())
+  orderId        String
+  productId      String?
   // Name and price are snapshotted: an order must remain readable after the
   // product is renamed, repriced or deleted.
-  name          String
+  name           String
   unitPriceCents Int
-  quantity      Int
-  totalCents    Int
+  quantity       Int
+  totalCents     Int
 
   order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)

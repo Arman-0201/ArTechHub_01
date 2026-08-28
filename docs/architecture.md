@@ -363,6 +363,48 @@ content is editable with the same editor and rendered by the same component.
 
 ---
 
+## Reference collections
+
+The page builder is the wrong tool once there are a hundred of something.
+Nobody lays out a hundred pages by hand, and the hundred-and-first would not
+match the first. A **collection** — network ports, protocols, commands — turns
+that into filling in a form.
+
+```
+Collection            "Port Encyclopedia", /reference/ports
+  CollectionCategory  the filter chips above the grid
+  CollectionEntry     "Port 22", /reference/ports/22
+    facts             key/value rows -> the sidebar's Quick info panel
+    panels            the boxes the detail page is built from
+```
+
+Three things make this different from a page with sections, and each is
+deliberate:
+
+- **The layout is closed.** A panel is one of five shapes — paragraphs, a
+  checklist, key/value rows, a table, link cards — and names the column it sits
+  in, `MAIN` or `SIDE`. An editor arranges panels; they do not lay out a page.
+  That constraint is what keeps the hundredth entry recognisably the same page
+  as the first.
+- **The index is rendered, not authored.** `/reference/{slug}` builds its
+  heading, search box, filter chips and grid from the entries. Adding an entry
+  adds a card and a page; nothing else is touched.
+- **The search runs in the browser.** The index endpoint returns every published
+  entry at once (capped at 500), so filtering happens on data already on the
+  page: results while typing, chips that compose with the search without a
+  second query, and the same component works when dropped onto a CMS page.
+
+That last point is what the `COLLECTION_GRID` section is for — pick a
+collection, and any page gets the same searchable grid. Cards link to
+`/reference/{collection}/{entry}` either way, so an entry has one URL no matter
+how many pages point at it.
+
+Panels are validated on write and read defensively on the way out: a panel whose
+`kind` the reading build does not recognise is skipped, exactly as an unknown
+section type is. Rolling deploys stay safe in both directions.
+
+---
+
 ## Caching
 
 | Layer                    | TTL      | Invalidated by            |
@@ -457,6 +499,15 @@ server.
 **A new section type**: add it to `SECTION_TYPES` and the Prisma `SectionType`
 enum, write the component, register it in `registry.tsx`, add a form branch in
 `section-editor.tsx`.
+
+**A new reference collection**: none of the above. Admin → Reference → New
+collection, add filter groups, add entries. The index page, its search and every
+detail page follow from the rows.
+
+**A new panel shape**: add it to `COLLECTION_PANEL_KINDS`, a field to
+`collectionPanelSchema`, a branch in `entry-panels.tsx` and one in
+`collection-entry-editor.tsx`. Existing entries are unaffected — the reader
+skips a kind it does not know.
 
 **A new permission**: add it to `PERMISSIONS` and a `PERMISSION_GROUPS` entry,
 apply `requirePermissions(...)` to the routes, re-run the seed. It appears in

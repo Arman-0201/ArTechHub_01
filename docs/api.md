@@ -276,6 +276,15 @@ and it shares the same rate-limit bucket.
 | GET    | `/legal/:slug`    | One document at its current version |
 | GET    | `/search`         | Site-wide search                  |
 | GET    | `/search/suggest` | Typeahead                         |
+| GET    | `/collections`    | Published reference collections   |
+| GET    | `/collections/:slug` | A collection and **all** its published entries |
+| GET    | `/collections/:slug/entries/:entrySlug` | One entry, with its panels |
+
+The collection index returns its entries whole rather than a page at a time,
+capped server-side at 500. The grid searches and filters in the browser, which
+is what makes typing feel instant and lets the same component be dropped onto
+any CMS page via the `COLLECTION_GRID` section; paginating it would mean the
+search could not see past page one. Drafts are excluded from both reads.
 
 ### Shop — requires `SHOP_ENABLED`
 
@@ -443,6 +452,52 @@ top-level heading, optionally keeping the original PDF as a download.
 | GET/POST/PATCH/DELETE | `/admin/footer/...`       | `menus.manage`  |
 | GET/POST/PATCH/DELETE | `/admin/blog/...`         | `blog.read` / `blog.manage` |
 | GET/POST/PATCH        | `/admin/legal/...`        | `legal.manage`  |
+
+### Reference collections
+
+| Method | Path                                     | Permission            |
+| ------ | ---------------------------------------- | --------------------- |
+| GET    | `/admin/collections`                     | `collections.read`    |
+| GET    | `/admin/collections/:id`                 | `collections.read`    |
+| POST   | `/admin/collections`                     | `collections.manage`  |
+| PATCH  | `/admin/collections/:id`                 | `collections.manage`  |
+| DELETE | `/admin/collections/:id`                 | `collections.manage`  |
+| POST   | `/admin/collections/:id/categories`      | `collections.manage`  |
+| PATCH  | `/admin/collection-categories/:id`       | `collections.manage`  |
+| DELETE | `/admin/collection-categories/:id`       | `collections.manage`  |
+| GET    | `/admin/collections/:id/entries`         | `collections.read`    |
+| POST   | `/admin/collections/:id/entries`         | `collections.manage`  |
+| PUT    | `/admin/collections/:id/entries/reorder` | `collections.manage`  |
+| GET    | `/admin/collection-entries/:id`          | `collections.read`    |
+| PATCH  | `/admin/collection-entries/:id`          | `collections.manage`  |
+| DELETE | `/admin/collection-entries/:id`          | `collections.manage`  |
+
+A collection is an encyclopedia of many small, similar entries; deleting one is
+a soft delete, since its URLs may be linked. Deleting a *filter* leaves its
+entries in place and uncategorised.
+
+An entry's `panels` are the boxes its detail page is built from — a closed set
+of five shapes, each naming the column it sits in:
+
+```jsonc
+{
+  "id": "p-desc",
+  "kind": "TEXT",          // TEXT | LIST | FACTS | TABLE | LINKS
+  "column": "MAIN",        // MAIN | SIDE
+  "tone": "DANGER",        // DEFAULT | INFO | SUCCESS | WARNING | DANGER
+  "title": "Security information",
+  "iconName": "ShieldAlert",
+  "body": "Paragraph one.\n\nParagraph two.",  // TEXT
+  "items": [],                                  // LIST
+  "facts": [],                                  // FACTS: {label, value}
+  "table": null,                                // TABLE: {columns, rows}
+  "links": []                                   // LINKS: {label, sublabel, href, badge, tone}
+}
+```
+
+Fields belonging to other kinds are kept rather than stripped, so switching a
+panel's kind in the editor loses nothing. A panel whose `kind` the reading build
+does not recognise is skipped, never guessed at.
 
 ### Media
 

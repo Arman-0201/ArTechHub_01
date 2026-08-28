@@ -4,6 +4,9 @@ import type {
   BlogPostCardDto,
   BlogPostDto,
   CategoryDto,
+  CollectionDto,
+  CollectionEntryDto,
+  CollectionIndexDto,
   CourseCardDto,
   CourseDetailDto,
   InstructorDto,
@@ -163,6 +166,35 @@ export const getInstructor = cache(
   ): Promise<{ instructor: InstructorDto; courses: CourseCardDto[] } | null> => {
     return serverFetchOptional<{ instructor: InstructorDto; courses: CourseCardDto[] }>(
       `/instructors/${slug}`,
+      { locale },
+    );
+  },
+);
+
+/* ----------------------------------------------------- reference collections */
+
+export const getCollections = cache(async (locale: string): Promise<CollectionDto[]> => {
+  try {
+    return await serverFetch<CollectionDto[]>('/collections', { locale, revalidate: 300 });
+  } catch {
+    return [];
+  }
+});
+
+export const getCollection = cache(
+  async (slug: string, locale: string): Promise<CollectionIndexDto | null> => {
+    return serverFetchOptional<CollectionIndexDto>(`/collections/${slug}`, { locale });
+  },
+);
+
+export const getCollectionEntry = cache(
+  async (
+    collectionSlug: string,
+    entrySlug: string,
+    locale: string,
+  ): Promise<{ collection: CollectionDto; entry: CollectionEntryDto } | null> => {
+    return serverFetchOptional<{ collection: CollectionDto; entry: CollectionEntryDto }>(
+      `/collections/${collectionSlug}/entries/${entrySlug}`,
       { locale },
     );
   },

@@ -156,6 +156,7 @@ const SECTION_LABELS: Record<string, string> = {
   TEAM: 'Team',
   INSTRUCTOR_LIST: 'Instructors',
   BLOG_GRID: 'Article grid',
+  COLLECTION_GRID: 'Reference grid',
   HTML: 'Custom HTML',
 };
 

@@ -1,4 +1,7 @@
 import type {
+  CollectionPanelColumn,
+  CollectionPanelKind,
+  CollectionTone,
   CourseAccessType,
   CourseLevel,
   CourseStatus,
@@ -429,6 +432,114 @@ export interface AuditLogDto {
   ipAddress: string | null;
   createdAt: string;
   actor: { id: string; name: string; email: string } | null;
+}
+
+/* ---------------------------------------------------------------- reference */
+
+/**
+ * Reference collections: an encyclopedia of many small, similar entries.
+ *
+ * The CMS page builder is the wrong tool once there are a hundred of something
+ * — nobody lays out a hundred pages by hand, and the hundred-and-first would
+ * not match the first. A collection turns that into filling in a form: the
+ * index page, its search, its filter chips and every detail page are rendered
+ * from the entries rather than authored.
+ *
+ * What an entry does *not* get is free layout. `panels` is a closed set of
+ * shapes (see `CollectionPanelKind`), which is what keeps every entry in a
+ * collection recognisably the same page.
+ */
+export interface CollectionFact {
+  label: string;
+  value: string;
+}
+
+export interface CollectionPanelLink {
+  label: string;
+  sublabel: string | null;
+  href: string;
+  badge: string | null;
+  tone: CollectionTone;
+}
+
+export interface CollectionPanelTable {
+  columns: string[];
+  rows: string[][];
+}
+
+export interface CollectionPanelDto {
+  id: string;
+  kind: CollectionPanelKind;
+  column: CollectionPanelColumn;
+  tone: CollectionTone;
+  title: string;
+  /** A Lucide icon name, drawn beside the title. */
+  iconName: string | null;
+  /** `TEXT`: paragraphs, separated by blank lines. */
+  body: string | null;
+  /** `LIST`: one line per item. */
+  items: string[];
+  /** `FACTS`: key/value rows. */
+  facts: CollectionFact[];
+  /** `TABLE`: a header row and its data rows. */
+  table: CollectionPanelTable | null;
+  /** `LINKS`: cards pointing at other entries or anywhere on the site. */
+  links: CollectionPanelLink[];
+}
+
+export interface CollectionCategoryDto {
+  id: string;
+  slug: string;
+  name: string;
+  sortOrder: number;
+  entryCount: number;
+}
+
+/** An entry as it appears in a grid: enough for a card, and nothing more. */
+export interface CollectionEntryCardDto {
+  id: string;
+  slug: string;
+  title: string;
+  subtitle: string | null;
+  summary: string | null;
+  badge: string | null;
+  tone: CollectionTone;
+  isFeatured: boolean;
+  category: { id: string; slug: string; name: string } | null;
+  /** Free-text labels the index search also matches on. */
+  keywords: string[];
+}
+
+export interface CollectionEntryDto extends CollectionEntryCardDto {
+  facts: CollectionFact[];
+  panels: CollectionPanelDto[];
+  updatedAt: string;
+  publishedAt: string | null;
+  /** Admin lists need the draft/published state; the public read never returns drafts. */
+  status?: PublishStatus;
+  sortOrder?: number;
+}
+
+export interface CollectionDto {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  iconName: string | null;
+  /** Small label above the index heading. */
+  eyebrow: string | null;
+  searchPlaceholder: string | null;
+  status: PublishStatus;
+  sortOrder: number;
+  categories: CollectionCategoryDto[];
+  entryCount: number;
+  updatedAt: string;
+}
+
+/** A collection plus every published entry — what the index page renders from. */
+export interface CollectionIndexDto {
+  collection: CollectionDto;
+  entries: CollectionEntryCardDto[];
 }
 
 /* ------------------------------------------------------------------ commerce */

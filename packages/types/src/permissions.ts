@@ -33,6 +33,9 @@ export const PERMISSIONS = {
   // Blog
   BLOG_READ: 'blog.read',
   BLOG_MANAGE: 'blog.manage',
+  // Reference collections (encyclopedia-style entries)
+  COLLECTIONS_READ: 'collections.read',
+  COLLECTIONS_MANAGE: 'collections.manage',
   // Media
   MEDIA_READ: 'media.read',
   MEDIA_UPLOAD: 'media.upload',
@@ -118,6 +121,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: PERMISSIONS.BLOG_READ, label: 'View blog posts' },
       { key: PERMISSIONS.BLOG_MANAGE, label: 'Manage blog posts' },
       { key: PERMISSIONS.LEGAL_MANAGE, label: 'Manage legal documents' },
+      { key: PERMISSIONS.COLLECTIONS_READ, label: 'View reference collections' },
+      { key: PERMISSIONS.COLLECTIONS_MANAGE, label: 'Manage reference collections' },
     ],
   },
   {
