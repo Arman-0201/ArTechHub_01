@@ -343,6 +343,7 @@ attacker-controlled. The real type is derived from the file's magic bytes
 | Allowlist                        | Images, PDF, video, audio, common documents            |
 | **SVG excluded**                 | It is XML that can carry script — stored-XSS vector    |
 | Size cap                         | `MAX_UPLOAD_MB` (25 by default); 2MB for learner avatars |
+| Direct to the API                | Uploads skip the web app's proxy — a bearer token, not the session cookie, authenticates them, so the `CORS_ORIGINS` allowlist is the gate |
 | Server-generated filenames       | Random bytes; the client's filename is never a path    |
 | Storage key validation           | Strict pattern check before any filesystem or S3 call  |
 | Kind restriction                 | Narrower callers (avatars) restrict to `IMAGE`         |

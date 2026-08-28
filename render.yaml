@@ -45,9 +45,12 @@ services:
         sync: false
       - key: WEB_PUBLIC_URL
         sync: false
-      # Vestigial for the browser, which now calls the API through the web
-      # app's origin, but config/env.ts still requires one entry in production.
-      # Set it to the web origin, with no trailing slash.
+      # Set this to the WEB origin, with no trailing slash — it is not vestigial.
+      # Most API calls arrive through the web app's own origin and carry no
+      # `Origin` at all, but two go straight to this service and do carry one:
+      # the realtime socket (a route handler cannot forward an upgrade) and file
+      # uploads (a function's request-body ceiling is below MAX_UPLOAD_MB). Both
+      # are refused if the web origin is not listed here.
       - key: CORS_ORIGINS
         sync: false
 
@@ -114,6 +117,10 @@ services:
         value: "true"
       - key: S3_PUBLIC_URL
         sync: false
+      # The one upload ceiling in the system. The browser posts uploads straight
+      # to this service, so nothing between it and the file imposes a lower one.
+      - key: MAX_UPLOAD_MB
+        value: "25"
 
       # --- First Super Admin, created by `npm run db:seed`
       - key: SEED_ADMIN_EMAIL

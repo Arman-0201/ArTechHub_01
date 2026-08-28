@@ -16,6 +16,12 @@ process.env.DATABASE_URL ??= 'postgresql://postgres:postgres@localhost:5432/acad
 process.env.MAIL_TRANSPORT ??= 'console';
 process.env.STORAGE_DRIVER ??= 'local';
 process.env.LOG_LEVEL ??= 'silent';
+/**
+ * Two hops, matching the documented deployment, so the realtime hub's
+ * hand-rolled hop counting is exercised rather than skipped. Nothing else in
+ * the suite sends `X-Forwarded-For`, so `req.ip` is unaffected.
+ */
+process.env.TRUST_PROXY ??= '2';
 
 /** True when a real database is reachable for integration tests. */
 export const hasDatabase = Boolean(process.env.TEST_DATABASE_URL);

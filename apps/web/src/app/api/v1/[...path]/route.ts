@@ -52,6 +52,12 @@ const STRIP_FROM_REQUEST = new Set([
   'host',
   'content-length',
   'accept-encoding',
+  // `Expect: 100-continue` is a negotiation with *this* hop, already settled by
+  // the time the body is in hand. `fetch` refuses the header outright
+  // (`UND_ERR_NOT_SUPPORTED`), so forwarding it turns every request from a
+  // client that sends one — curl past a kilobyte, and some intermediaries —
+  // into a spurious "service unreachable".
+  'expect',
   // Deliberate: the API's CORS allowlist rejects an unknown `Origin` outright,
   // and a proxied call is server-to-server. Sending the browser's origin would
   // turn every request into the very CORS failure this proxy removes.
@@ -154,8 +160,10 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
 
   // Buffered rather than streamed: a streaming request body needs
   // `duplex: 'half'`, which not every runtime this may be deployed to supports.
-  // Uploads are capped well below the platform request limit, so the cost is a
-  // short-lived allocation.
+  // Affordable because nothing large comes through here — the API caps JSON at
+  // 1MB, and file uploads go straight to the API rather than take this hop
+  // (see `UPLOAD_BASE` in `lib/api/client.ts`), precisely because a function's
+  // own request-body ceiling is lower than the upload limit.
   let body: ArrayBuffer | undefined;
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     const buffer = await request.arrayBuffer();

@@ -180,6 +180,20 @@ function countSocketsFromAddress(address: string): number {
  * hand: behind a configured number of proxies, the client is the entry that
  * many hops from the right of `X-Forwarded-For`; with none, the header is
  * attacker-controlled and the socket's own address is the only honest answer.
+ *
+ * The chain is often *shorter* than `TRUST_PROXY` on this endpoint, and that is
+ * not a misconfiguration. `TRUST_PROXY` counts the hops on the HTTP path, which
+ * in the documented topology includes the web app's own origin proxying
+ * `/api/v1/*`; a socket skips that hop, because a route handler cannot forward
+ * an upgrade. So the same deployment presents two hops to an API call and one
+ * to a handshake.
+ *
+ * Clamping to the left-most entry is what Express itself does with
+ * `trust proxy = n`, and it is why the clamp matters here: indexing past the
+ * start yields `undefined`, and the fall-back below is then the *load
+ * balancer's* address — identical for every visitor, which collapses the
+ * per-address cap into a site-wide ceiling and refuses everyone past the 64th
+ * socket.
  */
 function clientAddress(req: IncomingMessage): string | null {
   const hops = env.TRUST_PROXY;
@@ -191,7 +205,7 @@ function clientAddress(req: IncomingMessage): string | null {
       .map((entry) => entry.trim())
       .filter(Boolean);
 
-    const candidate = chain[chain.length - hops];
+    const candidate = chain[Math.max(0, chain.length - hops)];
     if (candidate) return candidate;
   }
 

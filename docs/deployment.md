@@ -24,18 +24,33 @@ That makes the hostnames the platforms hand out — `*.vercel.app` paired with
 A shared parent domain is still the better topology, and OAuth needs it: the
 provider's callback lands on the API host directly, bypassing the proxy.
 
-**One call does not take that hop: the admin realtime socket.** A Next route
-handler answers requests; it cannot hand over an HTTP upgrade, so the browser
-opens `wss://<api host>/api/v1/realtime` directly. Two consequences for a
-deployment:
+**Two calls do not take that hop: the realtime socket and file uploads.**
 
-- `NEXT_PUBLIC_API_URL` must be the API's real public origin — the socket URL is
-  built from it, and it is baked in at build time.
-- `CORS_ORIGINS` must list the web origin. The handshake checks `Origin` against
-  that allowlist, and unlike ordinary API calls this request *does* carry one.
+- The socket, because a Next route handler answers requests and cannot hand over
+  an HTTP upgrade. The browser opens `wss://<api host>/api/v1/realtime` itself.
+- Uploads, because the proxy is a serverless function on most hosts and a
+  function has a request-body ceiling of its own — 4.5MB on Vercel, well under
+  `MAX_UPLOAD_MB`. The platform refuses the request before any application code
+  runs, so a larger lesson PDF fails with a response that is not even the API's
+  error envelope. Uploads authenticate with the bearer token rather than the
+  refresh cookie, which is what makes going direct safe.
+
+Both consequences for a deployment, and they apply to both calls:
+
+- `NEXT_PUBLIC_API_URL` must be the API's real public origin — the socket URL and
+  the upload URL are built from it, and it is baked in at build time.
+- `CORS_ORIGINS` must list the web origin. Both requests carry an `Origin`,
+  unlike the proxied ones, and both are refused without it.
 
 If the socket cannot connect, the admin panel says so in its sidebar and keeps
 working — screens refetch on navigation, as they did before the feed existed.
+
+One more consequence, on the API side: `TRUST_PROXY` counts the hops on the
+*HTTP* path, which includes the web app's origin. A socket skips that hop, so
+the handshake sees one fewer entry in `X-Forwarded-For`; `realtime/hub.ts`
+clamps for it rather than falling back to the load balancer's own address, which
+would put every visitor in one bucket and refuse everyone past the per-address
+socket cap.
 
 | Role | Host |
 | ---- | ---- |
@@ -172,7 +187,9 @@ https://api.example.com/api/v1/auth/oauth/github/callback
    `NEXT_PUBLIC_API_URL` and that `CORS_ORIGINS` lists the web origin.
 6. Admin → Features → toggle something with the panel open in a second browser;
    the second one updates without a reload.
-7. Admin → Media → upload a file; it loads from the S3 public URL.
+7. Admin → Media → upload a file *over 5MB*; it succeeds and loads from the S3
+   public URL. Anything smaller would also pass through the proxy, so it does
+   not test that the direct upload path is configured.
 8. Register a new address; the verification email arrives.
 9. Repeat 4 in Safari, which is strictest about cross-site cookies.
 

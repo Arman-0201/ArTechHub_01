@@ -34,6 +34,9 @@ let port: number;
 
 const clients: WebSocket[] = [];
 
+/** Mirrors `MAX_SOCKETS_PER_ADDRESS` in the hub, which does not export it. */
+const MAX_SOCKETS_PER_ADDRESS = 64;
+
 function url(): string {
   return `ws://127.0.0.1:${port}${REALTIME_PATH}`;
 }
@@ -62,6 +65,33 @@ async function connectAnonymous(): Promise<{
   });
 
   return { socket, received };
+}
+
+/**
+ * An anonymous socket presenting one forwarded address — the shape a browser's
+ * handshake arrives in behind a single load balancer. Rejects with the refusal
+ * status so a test can assert on it.
+ */
+function connectFrom(address: string): Promise<WebSocket> {
+  const socket = new WebSocket(url(), [REALTIME_SUBPROTOCOL], {
+    headers: { 'x-forwarded-for': address },
+  });
+  clients.push(socket);
+
+  return new Promise<WebSocket>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('no response')), 5_000);
+    socket.on('open', () => {
+      clearTimeout(timer);
+      resolve(socket);
+    });
+    socket.on('unexpected-response', (_request, response) => {
+      clearTimeout(timer);
+      reject(new Error(`refused with ${response.statusCode}`));
+    });
+    socket.on('error', () => {
+      /* `unexpected-response` carries the answer; this follows it. */
+    });
+  });
 }
 
 /** A broadcast is synchronous, but delivery is a network hop. */
@@ -206,5 +236,36 @@ describe('the realtime hub', () => {
     // A server must not select a subprotocol the client never offered — a
     // browser rejects such a handshake outright.
     expect(status).toBe(400);
+  });
+
+  /**
+   * The per-address cap, on the header shape production actually presents.
+   *
+   * `TRUST_PROXY` counts the hops on the HTTP path, which includes the web
+   * app's origin proxying `/api/v1/*`. A socket skips that hop, so the same
+   * deployment hands this endpoint a *shorter* `X-Forwarded-For` than the hop
+   * count — and reading past the start of the chain would bucket every visitor
+   * onto the load balancer's own address, turning a per-client cap into a
+   * site-wide ceiling.
+   */
+  describe('the per-address cap', () => {
+    it('counts visitors apart when the chain is shorter than the hop count', async () => {
+      const first = await connectFrom('203.0.113.10');
+      const second = await connectFrom('203.0.113.11');
+
+      expect(first.readyState).toBe(WebSocket.OPEN);
+      expect(second.readyState).toBe(WebSocket.OPEN);
+      expect(realtimeConnectionCount()).toBe(2);
+    });
+
+    it('still bounds a single client that opens too many', async () => {
+      for (let index = 0; index < MAX_SOCKETS_PER_ADDRESS; index += 1) {
+        await connectFrom('198.51.100.7');
+      }
+
+      await expect(connectFrom('198.51.100.7')).rejects.toThrow(/429/);
+      // A different visitor is unaffected by their neighbour's behaviour.
+      await expect(connectFrom('198.51.100.8')).resolves.toBeDefined();
+    });
   });
 });

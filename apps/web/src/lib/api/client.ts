@@ -27,6 +27,41 @@ import { ApiError, buildQueryString, type ApiResult, type RequestOptions } from 
  */
 const API_BASE = '';
 
+/**
+ * File uploads are the one exception, and they go straight to the API.
+ *
+ * The proxy is a server-side route handler, which on most hosts is a function
+ * with a request-body ceiling of its own — 4.5MB on Vercel — far below the
+ * `MAX_UPLOAD_MB` the API enforces. The platform refuses the request before any
+ * of this app's code runs, so a lesson PDF a few megabytes over fails with a
+ * response that is not even the API's error envelope: the panel shows "Something
+ * went wrong" and no limit anyone configured explains it.
+ *
+ * A multipart upload is also the one call that does not *need* the proxy. The
+ * proxy exists to keep the refresh cookie first-party; an upload authenticates
+ * with the bearer token in a header, so nothing about the session depends on
+ * which origin answers it. It therefore connects directly, exactly as the
+ * realtime socket does — and inherits the same two deployment requirements:
+ * `NEXT_PUBLIC_API_URL` must be the API's real public origin, and the API's
+ * `CORS_ORIGINS` must list this app's.
+ *
+ * With no origin configured this falls back to `API_BASE`, and an origin that
+ * happens to be this app's own is same-origin anyway — a single-origin
+ * deployment keeps sending uploads through the proxy, exactly as before.
+ */
+const UPLOAD_BASE = resolveUploadBase();
+
+function resolveUploadBase(): string {
+  const configured = process.env.NEXT_PUBLIC_API_URL;
+  if (!configured) return API_BASE;
+
+  try {
+    return new URL(configured).origin;
+  } catch {
+    return API_BASE;
+  }
+}
+
 let accessToken: string | null = null;
 let accessTokenExpiresAt = 0;
 let currentLocale = 'en';
@@ -127,8 +162,9 @@ async function execute<T>(
   options: RequestOptions,
   token: string | null,
 ): Promise<Response> {
-  const url = `${API_BASE}/api/v1${path}${buildQueryString(options.query)}`;
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const base = isFormData ? UPLOAD_BASE : API_BASE;
+  const url = `${base}/api/v1${path}${buildQueryString(options.query)}`;
 
   return fetch(url, {
     method: options.method ?? 'GET',
