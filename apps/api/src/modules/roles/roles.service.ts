@@ -9,6 +9,7 @@ import {
 import { prisma } from '../../lib/prisma.js';
 import { BadRequestError, ConflictError, NotFoundError } from '../../lib/errors.js';
 import { slugify, uniqueSlug } from '../../lib/slug.js';
+import { disconnectUsers } from '../../realtime/hub.js';
 
 /**
  * Roles are user-defined; permissions are not. Every permission assigned to a
@@ -188,10 +189,17 @@ export async function invalidateSessionsForRole(roleId: string): Promise<void> {
   });
   if (holders.length === 0) return;
 
+  const userIds = holders.map((holder) => holder.userId);
+
   await prisma.user.updateMany({
-    where: { id: { in: holders.map((holder) => holder.userId) } },
+    where: { id: { in: userIds } },
     data: { tokenVersion: { increment: 1 } },
   });
+
+  // And their live feeds, which `tokenVersion` does not reach: a socket is
+  // checked once at the handshake. Each reconnects and is re-admitted with the
+  // permissions the role now carries.
+  disconnectUsers(userIds, 'Permissions changed');
 }
 
 /** Ensures the permission catalogue rows match the code definitions. */

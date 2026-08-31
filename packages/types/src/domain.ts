@@ -434,6 +434,37 @@ export interface AuditLogDto {
   actor: { id: string; name: string; email: string } | null;
 }
 
+/* ----------------------------------------------------------- support inbox */
+
+/**
+ * A contact-form submission.
+ *
+ * Written by an anonymous visitor on a public route, so everything here except
+ * `isHandled` is attacker-supplied text. Render it as text, never as markup.
+ */
+export interface ContactMessageDto {
+  id: string;
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+  /** Set by an administrator once the message has been dealt with. */
+  isHandled: boolean;
+  /** Kept for abuse investigation. Only ever shown to `settings.manage`. */
+  ipAddress: string | null;
+  createdAt: string;
+}
+
+export interface NewsletterSubscriberDto {
+  id: string;
+  email: string;
+  locale: string;
+  isConfirmed: boolean;
+  confirmedAt: string | null;
+  unsubscribedAt: string | null;
+  createdAt: string;
+}
+
 /* ---------------------------------------------------------------- reference */
 
 /**

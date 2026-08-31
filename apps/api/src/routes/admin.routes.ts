@@ -65,7 +65,7 @@ import {
 } from '@academy/validation';
 import { env } from '../config/env.js';
 import { asyncHandler, noContent, ok } from '../lib/http.js';
-import { BadRequestError } from '../lib/errors.js';
+import { BadRequestError, NotFoundError } from '../lib/errors.js';
 import { validateBody, validateQuery } from '../middleware/validate.js';
 import {
   authenticate,
@@ -357,6 +357,11 @@ adminRouter.put(
   asyncHandler(async (req, res) => {
     const { items } = req.body as z.infer<typeof sortOrderItemsSchema>;
     await categoriesService.reorderCategories(items);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.CATEGORY_REORDERED,
+      targetType: 'category',
+      metadata: { count: items.length },
+    });
     noContent(res);
   }),
 );
@@ -480,6 +485,11 @@ adminRouter.post(
   requirePermissions(PERMISSIONS.COURSES_UPDATE),
   asyncHandler(async (req, res) => {
     await coursesService.restoreCourse(req.params.id!);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COURSE_RESTORED,
+      targetType: 'course',
+      targetId: req.params.id!,
+    });
     noContent(res);
   }),
 );
@@ -491,7 +501,14 @@ adminRouter.post(
   requirePermissions(PERMISSIONS.COURSES_UPDATE),
   validateBody(createModuleSchema),
   asyncHandler(async (req, res) => {
-    ok(res, await lessonsService.createModule(req.params.courseId!, req.body as never), 201);
+    const module = await lessonsService.createModule(req.params.courseId!, req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.MODULE_CREATED,
+      targetType: 'module',
+      targetId: module.id,
+      metadata: { courseId: req.params.courseId },
+    });
+    ok(res, module, 201);
   }),
 );
 
@@ -501,6 +518,11 @@ adminRouter.patch(
   validateBody(updateModuleSchema),
   asyncHandler(async (req, res) => {
     await lessonsService.updateModule(req.params.id!, req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.MODULE_UPDATED,
+      targetType: 'module',
+      targetId: req.params.id!,
+    });
     noContent(res);
   }),
 );
@@ -510,6 +532,11 @@ adminRouter.delete(
   requirePermissions(PERMISSIONS.COURSES_UPDATE),
   asyncHandler(async (req, res) => {
     await lessonsService.deleteModule(req.params.id!);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.MODULE_DELETED,
+      targetType: 'module',
+      targetId: req.params.id!,
+    });
     noContent(res);
   }),
 );
@@ -521,6 +548,12 @@ adminRouter.put(
   asyncHandler(async (req, res) => {
     const { items } = req.body as z.infer<typeof sortOrderItemsSchema>;
     await lessonsService.reorderModules(req.params.courseId!, items);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.MODULE_REORDERED,
+      targetType: 'course',
+      targetId: req.params.courseId!,
+      metadata: { count: items.length },
+    });
     noContent(res);
   }),
 );
@@ -588,6 +621,12 @@ adminRouter.put(
   asyncHandler(async (req, res) => {
     const { items } = req.body as z.infer<typeof sortOrderItemsSchema>;
     await lessonsService.reorderLessons(req.params.moduleId!, items);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.LESSON_REORDERED,
+      targetType: 'module',
+      targetId: req.params.moduleId!,
+      metadata: { count: items.length },
+    });
     noContent(res);
   }),
 );
@@ -668,18 +707,33 @@ adminRouter.post(
   '/instructors',
   requirePermissions(PERMISSIONS.COURSES_UPDATE),
   validateBody(createInstructorSchema),
-  asyncHandler(async (req, res) =>
-    ok(res, await instructorsService.createInstructor(req.body as never), 201),
-  ),
+  asyncHandler(async (req, res) => {
+    const instructor = await instructorsService.createInstructor(req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.INSTRUCTOR_CREATED,
+      targetType: 'instructor',
+      targetId: instructor.id,
+    });
+    ok(res, instructor, 201);
+  }),
 );
 
 adminRouter.patch(
   '/instructors/:id',
   requirePermissions(PERMISSIONS.COURSES_UPDATE),
   validateBody(updateInstructorSchema),
-  asyncHandler(async (req, res) =>
-    ok(res, await instructorsService.updateInstructor(req.params.id!, req.body as never)),
-  ),
+  asyncHandler(async (req, res) => {
+    const instructor = await instructorsService.updateInstructor(
+      req.params.id!,
+      req.body as never,
+    );
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.INSTRUCTOR_UPDATED,
+      targetType: 'instructor',
+      targetId: req.params.id!,
+    });
+    ok(res, instructor);
+  }),
 );
 
 adminRouter.delete(
@@ -687,6 +741,11 @@ adminRouter.delete(
   requirePermissions(PERMISSIONS.COURSES_UPDATE),
   asyncHandler(async (req, res) => {
     await instructorsService.deleteInstructor(req.params.id!);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.INSTRUCTOR_DELETED,
+      targetType: 'instructor',
+      targetId: req.params.id!,
+    });
     noContent(res);
   }),
 );
@@ -840,7 +899,17 @@ adminRouter.patch(
   requirePermissions(PERMISSIONS.PAGES_UPDATE),
   validateBody(updateSectionSchema),
   asyncHandler(async (req, res) => {
-    ok(res, await pagesService.updateSection(req.params.id!, req.body as never, req.locale));
+    const section = await pagesService.updateSection(
+      req.params.id!,
+      req.body as never,
+      req.locale,
+    );
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.SECTION_UPDATED,
+      targetType: 'section',
+      targetId: req.params.id!,
+    });
+    ok(res, section);
   }),
 );
 
@@ -848,7 +917,13 @@ adminRouter.delete(
   '/sections/:id',
   requirePermissions(PERMISSIONS.PAGES_UPDATE),
   asyncHandler(async (req, res) => {
-    ok(res, await pagesService.deleteSection(req.params.id!, req.locale));
+    const page = await pagesService.deleteSection(req.params.id!, req.locale);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.SECTION_DELETED,
+      targetType: 'section',
+      targetId: req.params.id!,
+    });
+    ok(res, page);
   }),
 );
 
@@ -856,7 +931,13 @@ adminRouter.post(
   '/sections/:id/duplicate',
   requirePermissions(PERMISSIONS.PAGES_UPDATE),
   asyncHandler(async (req, res) => {
-    ok(res, await pagesService.duplicateSection(req.params.id!, req.locale), 201);
+    const page = await pagesService.duplicateSection(req.params.id!, req.locale);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.SECTION_DUPLICATED,
+      targetType: 'section',
+      targetId: req.params.id!,
+    });
+    ok(res, page, 201);
   }),
 );
 
@@ -888,7 +969,15 @@ adminRouter.post(
   '/menus',
   requirePermissions(PERMISSIONS.MENUS_MANAGE),
   validateBody(createMenuSchema),
-  asyncHandler(async (req, res) => ok(res, await menusService.createMenu(req.body as never), 201)),
+  asyncHandler(async (req, res) => {
+    const menu = await menusService.createMenu(req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.MENU_CREATED,
+      targetType: 'menu',
+      targetId: menu.id,
+    });
+    ok(res, menu, 201);
+  }),
 );
 
 adminRouter.get(
@@ -902,7 +991,17 @@ adminRouter.post(
   requirePermissions(PERMISSIONS.MENUS_MANAGE),
   validateBody(createMenuItemSchema),
   asyncHandler(async (req, res) => {
-    ok(res, await menusService.addMenuItem(req.params.slug!, req.body as never), 201);
+    const items = await menusService.addMenuItem(req.params.slug!, req.body as never);
+    // The service answers with the whole tree rather than the new node, so the
+    // menu is the target here. That is the right granularity anyway: a menu is
+    // what an admin screen shows and what a visitor renders.
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.MENU_ITEM_CREATED,
+      targetType: 'menu',
+      targetId: req.params.slug!,
+      metadata: { label: (req.body as { label?: string }).label },
+    });
+    ok(res, items, 201);
   }),
 );
 
@@ -911,14 +1010,32 @@ adminRouter.patch(
   requirePermissions(PERMISSIONS.MENUS_MANAGE),
   validateBody(updateMenuItemSchema),
   asyncHandler(async (req, res) => {
-    ok(res, await menusService.updateMenuItem(req.params.id!, req.body as never));
+    const body = req.body as { isVisible?: boolean };
+    const item = await menusService.updateMenuItem(req.params.id!, req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.MENU_ITEM_UPDATED,
+      targetType: 'menu_item',
+      targetId: req.params.id!,
+      // Visibility is the field worth naming: it is the one that changes what
+      // visitors see, rather than only how the item is labelled.
+      ...(body.isVisible !== undefined ? { metadata: { isVisible: body.isVisible } } : {}),
+    });
+    ok(res, item);
   }),
 );
 
 adminRouter.delete(
   '/menu-items/:id',
   requirePermissions(PERMISSIONS.MENUS_MANAGE),
-  asyncHandler(async (req, res) => ok(res, await menusService.deleteMenuItem(req.params.id!))),
+  asyncHandler(async (req, res) => {
+    const result = await menusService.deleteMenuItem(req.params.id!);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.MENU_ITEM_DELETED,
+      targetType: 'menu_item',
+      targetId: req.params.id!,
+    });
+    ok(res, result);
+  }),
 );
 
 adminRouter.put(
@@ -949,16 +1066,30 @@ adminRouter.post(
   '/footer/groups',
   requirePermissions(PERMISSIONS.MENUS_MANAGE),
   validateBody(footerGroupSchema),
-  asyncHandler(async (req, res) => ok(res, await menusService.createFooterGroup(req.body as never), 201)),
+  asyncHandler(async (req, res) => {
+    const group = await menusService.createFooterGroup(req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.FOOTER_GROUP_CREATED,
+      targetType: 'footer_group',
+      targetId: group.id,
+    });
+    ok(res, group, 201);
+  }),
 );
 
 adminRouter.patch(
   '/footer/groups/:id',
   requirePermissions(PERMISSIONS.MENUS_MANAGE),
   validateBody(footerGroupSchema.partial()),
-  asyncHandler(async (req, res) =>
-    ok(res, await menusService.updateFooterGroup(req.params.id!, req.body as never)),
-  ),
+  asyncHandler(async (req, res) => {
+    const group = await menusService.updateFooterGroup(req.params.id!, req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.FOOTER_GROUP_UPDATED,
+      targetType: 'footer_group',
+      targetId: req.params.id!,
+    });
+    ok(res, group);
+  }),
 );
 
 adminRouter.delete(
@@ -966,6 +1097,11 @@ adminRouter.delete(
   requirePermissions(PERMISSIONS.MENUS_MANAGE),
   asyncHandler(async (req, res) => {
     await menusService.deleteFooterGroup(req.params.id!);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.FOOTER_GROUP_DELETED,
+      targetType: 'footer_group',
+      targetId: req.params.id!,
+    });
     noContent(res);
   }),
 );
@@ -974,18 +1110,31 @@ adminRouter.post(
   '/footer/groups/:groupId/links',
   requirePermissions(PERMISSIONS.MENUS_MANAGE),
   validateBody(footerLinkSchema),
-  asyncHandler(async (req, res) =>
-    ok(res, await menusService.createFooterLink(req.params.groupId!, req.body as never), 201),
-  ),
+  asyncHandler(async (req, res) => {
+    const link = await menusService.createFooterLink(req.params.groupId!, req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.FOOTER_LINK_CREATED,
+      targetType: 'footer_link',
+      targetId: link.id,
+      metadata: { groupId: req.params.groupId },
+    });
+    ok(res, link, 201);
+  }),
 );
 
 adminRouter.patch(
   '/footer/links/:id',
   requirePermissions(PERMISSIONS.MENUS_MANAGE),
   validateBody(footerLinkSchema.partial()),
-  asyncHandler(async (req, res) =>
-    ok(res, await menusService.updateFooterLink(req.params.id!, req.body as never)),
-  ),
+  asyncHandler(async (req, res) => {
+    const link = await menusService.updateFooterLink(req.params.id!, req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.FOOTER_LINK_UPDATED,
+      targetType: 'footer_link',
+      targetId: req.params.id!,
+    });
+    ok(res, link);
+  }),
 );
 
 adminRouter.delete(
@@ -993,6 +1142,11 @@ adminRouter.delete(
   requirePermissions(PERMISSIONS.MENUS_MANAGE),
   asyncHandler(async (req, res) => {
     await menusService.deleteFooterLink(req.params.id!);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.FOOTER_LINK_DELETED,
+      targetType: 'footer_link',
+      targetId: req.params.id!,
+    });
     noContent(res);
   }),
 );
@@ -1055,7 +1209,15 @@ adminRouter.patch(
   '/media/:id',
   requirePermissions(PERMISSIONS.MEDIA_UPLOAD),
   validateBody(updateMediaSchema),
-  asyncHandler(async (req, res) => ok(res, await mediaService.updateMedia(req.params.id!, req.body as never))),
+  asyncHandler(async (req, res) => {
+    const media = await mediaService.updateMedia(req.params.id!, req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.MEDIA_UPDATED,
+      targetType: 'media',
+      targetId: req.params.id!,
+    });
+    ok(res, media);
+  }),
 );
 
 adminRouter.delete(
@@ -1100,7 +1262,13 @@ adminRouter.post(
   requirePermissions(PERMISSIONS.BLOG_MANAGE),
   validateBody(createBlogPostSchema),
   asyncHandler(async (req, res) => {
-    ok(res, await blogService.createPost(req.body as never, req.user!.id, req.locale), 201);
+    const post = await blogService.createPost(req.body as never, req.user!.id, req.locale);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.BLOG_CREATED,
+      targetType: 'blog_post',
+      targetId: post.id,
+    });
+    ok(res, post, 201);
   }),
 );
 
@@ -1109,7 +1277,13 @@ adminRouter.patch(
   requirePermissions(PERMISSIONS.BLOG_MANAGE),
   validateBody(updateBlogPostSchema),
   asyncHandler(async (req, res) => {
-    ok(res, await blogService.updatePost(req.params.id!, req.body as never, req.locale));
+    const post = await blogService.updatePost(req.params.id!, req.body as never, req.locale);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.BLOG_UPDATED,
+      targetType: 'blog_post',
+      targetId: req.params.id!,
+    });
+    ok(res, post);
   }),
 );
 
@@ -1118,6 +1292,11 @@ adminRouter.delete(
   requirePermissions(PERMISSIONS.BLOG_MANAGE),
   asyncHandler(async (req, res) => {
     await blogService.deletePost(req.params.id!);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.BLOG_DELETED,
+      targetType: 'blog_post',
+      targetId: req.params.id!,
+    });
     noContent(res);
   }),
 );
@@ -1215,9 +1394,18 @@ adminRouter.patch(
   '/collection-categories/:id',
   requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
   validateBody(collectionCategorySchema.partial()),
-  asyncHandler(async (req, res) =>
-    ok(res, await collectionsService.updateCollectionCategory(req.params.id!, req.body as never)),
-  ),
+  asyncHandler(async (req, res) => {
+    const category = await collectionsService.updateCollectionCategory(
+      req.params.id!,
+      req.body as never,
+    );
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COLLECTION_CATEGORY_UPDATED,
+      targetType: 'collection_category',
+      targetId: req.params.id!,
+    });
+    ok(res, category);
+  }),
 );
 
 adminRouter.delete(
@@ -1225,6 +1413,11 @@ adminRouter.delete(
   requirePermissions(PERMISSIONS.COLLECTIONS_MANAGE),
   asyncHandler(async (req, res) => {
     await collectionsService.deleteCollectionCategory(req.params.id!);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COLLECTION_CATEGORY_DELETED,
+      targetType: 'collection_category',
+      targetId: req.params.id!,
+    });
     noContent(res);
   }),
 );
@@ -1271,6 +1464,12 @@ adminRouter.put(
   asyncHandler(async (req, res) => {
     const { items } = req.body as z.infer<typeof sortOrderItemsSchema>;
     await collectionsService.reorderEntries(items);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.COLLECTION_ENTRIES_REORDERED,
+      targetType: 'collection',
+      targetId: req.params.id!,
+      metadata: { count: items.length },
+    });
     noContent(res);
   }),
 );
@@ -1324,16 +1523,30 @@ adminRouter.post(
   '/legal',
   requirePermissions(PERMISSIONS.LEGAL_MANAGE),
   validateBody(legalDocumentSchema),
-  asyncHandler(async (req, res) => ok(res, await legalService.createDocument(req.body as never), 201)),
+  asyncHandler(async (req, res) => {
+    const document = await legalService.createDocument(req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.LEGAL_CREATED,
+      targetType: 'legal_document',
+      targetId: document.id,
+    });
+    ok(res, document, 201);
+  }),
 );
 
 adminRouter.patch(
   '/legal/:id',
   requirePermissions(PERMISSIONS.LEGAL_MANAGE),
   validateBody(legalDocumentSchema.partial().omit({ slug: true })),
-  asyncHandler(async (req, res) =>
-    ok(res, await legalService.updateDocument(req.params.id!, req.body as never)),
-  ),
+  asyncHandler(async (req, res) => {
+    const document = await legalService.updateDocument(req.params.id!, req.body as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.LEGAL_UPDATED,
+      targetType: 'legal_document',
+      targetId: req.params.id!,
+    });
+    ok(res, document);
+  }),
 );
 
 adminRouter.get(
@@ -1528,7 +1741,13 @@ adminRouter.put(
   validateBody(routeSeoSchema),
   asyncHandler(async (req, res) => {
     const input = req.body as z.infer<typeof routeSeoSchema>;
-    ok(res, await upsertSeo({ routeKey: input.routeKey }, input.seo as never));
+    const seo = await upsertSeo({ routeKey: input.routeKey }, input.seo as never);
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.SEO_UPDATED,
+      targetType: 'seo',
+      metadata: { routeKey: input.routeKey },
+    });
+    ok(res, seo);
   }),
 );
 
@@ -1618,6 +1837,42 @@ adminRouter.get(
       hasNextPage: query.page * query.pageSize < total,
       hasPreviousPage: query.page > 1,
     });
+  }),
+);
+
+/**
+ * Marks a contact message handled, or puts it back in the queue.
+ *
+ * Audited, because this is a genuine administrative act on a shared queue —
+ * "who cleared this?" is a real question when two people work the same inbox.
+ * Going through `recordAudit` also means the other admins reading it are told
+ * live, through the map in `realtime/events.ts`, with no extra call here.
+ */
+adminRouter.patch(
+  '/contact-messages/:id',
+  requirePermissions(PERMISSIONS.SETTINGS_MANAGE),
+  validateBody(z.object({ isHandled: z.boolean() })),
+  asyncHandler(async (req, res) => {
+    const { isHandled } = req.body as { isHandled: boolean };
+    // Checked rather than caught: an unknown id reaching `update` surfaces as a
+    // bare Prisma error, which the handler can only turn into a 409.
+    const existing = await prisma.contactMessage.findUnique({
+      where: { id: req.params.id! },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundError('Contact message');
+
+    const message = await prisma.contactMessage.update({
+      where: { id: existing.id },
+      data: { isHandled },
+    });
+    await recordAudit(req, {
+      action: AUDIT_ACTIONS.MESSAGE_HANDLED,
+      targetType: 'contact_message',
+      targetId: message.id,
+      metadata: { isHandled },
+    });
+    ok(res, message);
   }),
 );
 

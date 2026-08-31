@@ -1,11 +1,12 @@
 import type { Prisma } from '@prisma/client';
+import { REALTIME_RESOURCES } from '@academy/types';
 import type { CourseCardDto, EnrollmentDto, PaginatedResult } from '@academy/types';
 import { prisma } from '../../lib/prisma.js';
 import { AuthorizationError, BadRequestError, ConflictError, NotFoundError } from '../../lib/errors.js';
 import { buildPaginationMeta, toSkipTake } from '../../lib/http.js';
 import { resolveMediaUrl } from '../media/media.helpers.js';
 import { applyTranslation, pickTranslation } from '../translations/translation.helpers.js';
-import { announceLearnerChange } from '../../realtime/events.js';
+import { announceLearnerChange, announceVisitorActivity } from '../../realtime/events.js';
 
 /**
  * Enrollment is where course access is granted, so the access-type rules live
@@ -146,6 +147,22 @@ export async function enroll(input: EnrollInput): Promise<EnrollmentDto> {
    */
   announceLearnerChange(input.userId, ['enrollments', 'progress']);
 
+  /*
+   * And the admins watching the enrollment list, but only when the learner did
+   * this themselves.
+   *
+   * `source: 'admin'` reaches here from a route that calls `recordAudit`, which
+   * already announces it — with an actor attached, which is the better event.
+   * Announcing again would only duplicate the broadcast. `'order'` does not go
+   * through the audit trail, so it needs this.
+   *
+   * `courses` rides along because the course list shows `enrollmentCount`, which
+   * the transaction above just moved.
+   */
+  if ((input.source ?? 'self') !== 'admin') {
+    announceVisitorActivity([REALTIME_RESOURCES.ENROLLMENTS, REALTIME_RESOURCES.COURSES]);
+  }
+
   return getEnrollment(input.userId, input.courseId, 'en');
 }
 
@@ -166,6 +183,9 @@ export async function cancelEnrollment(userId: string, courseId: string): Promis
   ]);
 
   announceLearnerChange(userId, ['enrollments', 'progress']);
+  // Only a learner cancels their own enrollment; there is no admin path here to
+  // double-announce.
+  announceVisitorActivity([REALTIME_RESOURCES.ENROLLMENTS, REALTIME_RESOURCES.COURSES]);
 }
 
 export async function getEnrollment(

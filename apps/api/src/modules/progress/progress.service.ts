@@ -1,3 +1,4 @@
+import { REALTIME_RESOURCES } from '@academy/types';
 import type {
   CourseProgressDto,
   EnrollmentDto,
@@ -6,7 +7,7 @@ import type {
 } from '@academy/types';
 import { prisma } from '../../lib/prisma.js';
 import { AuthorizationError, NotFoundError } from '../../lib/errors.js';
-import { announceLearnerChange } from '../../realtime/events.js';
+import { announceLearnerChange, announceVisitorActivity } from '../../realtime/events.js';
 
 /**
  * Progress is server-authoritative.
@@ -206,6 +207,23 @@ export async function updateLessonProgress(
    * writer having to know which other screens exist.
    */
   announceLearnerChange(input.userId, ['progress']);
+
+  /*
+   * Admins see completions, but only the transition — never the scrubbing.
+   *
+   * This is the one visitor event with genuine volume behind it: a busy
+   * platform completes lessons constantly, and `broadcastChange` walks every
+   * subscriber. `justCompleted` is already the flag that decides whether the
+   * learning day is credited, and it is the right gate here for the same
+   * reason — re-marking an already-complete lesson, or saving a video
+   * position, is not news to anyone.
+   *
+   * `enrollments` rather than `courses`: what moved is a learner's standing in
+   * the enrollment list, not the catalogue.
+   */
+  if (justCompleted) {
+    announceVisitorActivity([REALTIME_RESOURCES.ENROLLMENTS]);
+  }
 
   return {
     lesson: {

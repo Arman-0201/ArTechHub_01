@@ -13,9 +13,12 @@ import {
   broadcastPublic,
   broadcastToUser,
   closeRealtime,
+  disconnectUser,
+  disconnectUsers,
   realtimeAnonymousCount,
   realtimeConnectionCount,
 } from '../../src/realtime/hub.js';
+import { announceVisitorActivity } from '../../src/realtime/events.js';
 
 /**
  * The hub, with real sockets.
@@ -248,6 +251,64 @@ describe('the realtime hub', () => {
    * onto the load balancer's own address, turning a per-client cap into a
    * site-wide ceiling.
    */
+  /**
+   * Visitor activity — a self-enrollment, a checkout, a contact message —
+   * reaches the admin feed without passing through the audit trail.
+   *
+   * The property worth pinning is the boundary, not the delivery: this rides on
+   * `broadcastChange`, which the admin-audience gate already governs, so the
+   * risk is not that admins miss it but that a *visitor* receives it. An
+   * anonymous socket holds only the public audience, and a `resource.changed`
+   * naming the orders screen must never cross to one.
+   */
+  describe('visitor activity', () => {
+    it('never reaches the anonymous sockets it is triggered by', async () => {
+      const visitor = await connectAnonymous();
+
+      announceVisitorActivity(['orders', 'products']);
+      await settle();
+
+      expect(visitor.received.some((event) => event.type === 'resource.changed')).toBe(false);
+      // And nothing else arrived in its place: this is an admin-only event, not
+      // a public one wearing a different name.
+      expect(visitor.received.some((event) => event.type === 'public.changed')).toBe(false);
+    });
+  });
+
+  /**
+   * Hanging up on an account.
+   *
+   * A socket authenticates once and otherwise runs to its token's expiry, so
+   * every path that invalidates a session has to close it explicitly. What
+   * these pin down is the aim: an anonymous socket belongs to no account and
+   * must survive, or revoking one person's session would drop every stranger
+   * reading the marketing site.
+   */
+  describe('disconnecting an account', () => {
+    it('leaves sockets that belong to no account alone', async () => {
+      const visitor = await connectAnonymous();
+
+      expect(disconnectUser('some-user-id', 'Session revoked')).toBe(0);
+      await settle();
+
+      expect(visitor.socket.readyState).toBe(WebSocket.OPEN);
+      expect(realtimeConnectionCount()).toBe(1);
+      expect(realtimeAnonymousCount()).toBe(1);
+    });
+
+    it('is a no-op for an account with nothing open', async () => {
+      await connectAnonymous();
+
+      expect(disconnectUser('absent-user', 'Password changed')).toBe(0);
+      expect(disconnectUsers(['absent-user', 'another'], 'Permissions changed')).toBe(0);
+      // An empty list must not be read as "everyone".
+      expect(disconnectUsers([], 'Permissions changed')).toBe(0);
+      await settle();
+
+      expect(realtimeConnectionCount()).toBe(1);
+    });
+  });
+
   describe('the per-address cap', () => {
     it('counts visitors apart when the chain is shorter than the hop count', async () => {
       const first = await connectFrom('203.0.113.10');

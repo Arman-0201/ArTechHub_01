@@ -539,6 +539,72 @@ export function broadcastToUser(userId: string, topics: RealtimeLearnerTopic[]):
   }
 }
 
+/**
+ * Closes every socket belonging to an account, now.
+ *
+ * A socket authenticates once, at the handshake, and is otherwise bound to its
+ * token's expiry. That is the right lifetime for the ordinary case and far too
+ * long for the security one: revoking a session, suspending an account or
+ * narrowing a role all take effect on the next *HTTP* request — because
+ * `tokenVersion` is checked there — while the live feed carries on until the
+ * token would have expired anyway. This closes that window.
+ *
+ * `FORBIDDEN` rather than `TOKEN_EXPIRED`, deliberately. The client treats the
+ * former as final and stops reconnecting, which is what should happen to a
+ * revoked device; the latter would have it refresh and try again in a loop.
+ *
+ * For a *narrowed* rather than revoked role this is still right: the account
+ * may still connect, and its next handshake re-resolves permissions from the
+ * database. Rebuilding a live subscriber's permission set in place would be a
+ * second implementation of the same rule, and the one more likely to drift.
+ *
+ * Never throws, for the same reason the broadcasts do not: this is called after
+ * a security change that has already been committed, and failing to hang up
+ * must not unwind it.
+ */
+export function disconnectUser(userId: string, reason: string): number {
+  if (subscribers.size === 0) return 0;
+
+  let closed = 0;
+  try {
+    // Collected first: closing mutates the set through the `close` handler.
+    const doomed = [...subscribers].filter((subscriber) => subscriber.userId === userId);
+    for (const subscriber of doomed) {
+      subscriber.socket.close(REALTIME_CLOSE.FORBIDDEN, reason);
+      closed += 1;
+    }
+    if (closed > 0) {
+      logger.debug({ userId, closed, reason }, 'Closed realtime sockets for an account');
+    }
+  } catch (error) {
+    logger.error({ err: error, userId }, 'Failed to close realtime sockets for an account');
+  }
+  return closed;
+}
+
+/**
+ * The same, for several accounts at once — a role's permissions changing moves
+ * every holder of it.
+ */
+export function disconnectUsers(userIds: string[], reason: string): number {
+  if (userIds.length === 0) return 0;
+  const targets = new Set(userIds);
+
+  let closed = 0;
+  try {
+    const doomed = [...subscribers].filter(
+      (subscriber) => subscriber.userId && targets.has(subscriber.userId),
+    );
+    for (const subscriber of doomed) {
+      subscriber.socket.close(REALTIME_CLOSE.FORBIDDEN, reason);
+      closed += 1;
+    }
+  } catch (error) {
+    logger.error({ err: error, count: userIds.length }, 'Failed to close realtime sockets');
+  }
+  return closed;
+}
+
 /** Open sockets, for the health endpoint and for tests. */
 export function realtimeConnectionCount(): number {
   return subscribers.size;

@@ -32,11 +32,73 @@ describe('realtime event mapping', () => {
 
   it('routes each audit action to the screen that shows it', () => {
     expect(resourcesForAction(AUDIT_ACTIONS.USER_CREATED)).toContain(REALTIME_RESOURCES.USERS);
+    expect(resourcesForAction(AUDIT_ACTIONS.MESSAGE_HANDLED)).toContain(
+      REALTIME_RESOURCES.MESSAGES,
+    );
     expect(resourcesForAction(AUDIT_ACTIONS.ORDER_STATUS_CHANGED)).toContain(
       REALTIME_RESOURCES.ORDERS,
     );
     // A lesson is not its own screen; it moves the course it belongs to.
     expect(resourcesForAction(AUDIT_ACTIONS.LESSON_UPDATED)).toContain(REALTIME_RESOURCES.COURSES);
+  });
+
+  /**
+   * The actions that were once silent.
+   *
+   * Every one of these is a route that changed the database and told nobody —
+   * not the audit log, not an admin screen, not the public site. They are
+   * grouped here because the failure mode is quiet: a route that stops calling
+   * `recordAudit` looks exactly like a route that never did.
+   */
+  it('moves the right screen for the changes that used to be silent', () => {
+    const cases: [string, string][] = [
+      [AUDIT_ACTIONS.MENU_ITEM_CREATED, REALTIME_RESOURCES.MENUS],
+      [AUDIT_ACTIONS.MENU_ITEM_UPDATED, REALTIME_RESOURCES.MENUS],
+      [AUDIT_ACTIONS.MENU_ITEM_DELETED, REALTIME_RESOURCES.MENUS],
+      // The footer is navigation: same resource, no second mapping to drift.
+      [AUDIT_ACTIONS.FOOTER_GROUP_CREATED, REALTIME_RESOURCES.MENUS],
+      [AUDIT_ACTIONS.FOOTER_LINK_DELETED, REALTIME_RESOURCES.MENUS],
+      // A module belongs to a course, and the course list shows its counts.
+      [AUDIT_ACTIONS.MODULE_CREATED, REALTIME_RESOURCES.COURSES],
+      [AUDIT_ACTIONS.MODULE_REORDERED, REALTIME_RESOURCES.COURSES],
+      [AUDIT_ACTIONS.LESSON_REORDERED, REALTIME_RESOURCES.COURSES],
+      [AUDIT_ACTIONS.INSTRUCTOR_UPDATED, REALTIME_RESOURCES.INSTRUCTORS],
+      [AUDIT_ACTIONS.BLOG_CREATED, REALTIME_RESOURCES.BLOG],
+      [AUDIT_ACTIONS.BLOG_DELETED, REALTIME_RESOURCES.BLOG],
+      [AUDIT_ACTIONS.SECTION_DUPLICATED, REALTIME_RESOURCES.PAGES],
+      [AUDIT_ACTIONS.LEGAL_UPDATED, REALTIME_RESOURCES.LEGAL],
+      [AUDIT_ACTIONS.SEO_UPDATED, REALTIME_RESOURCES.SEO],
+      [AUDIT_ACTIONS.MEDIA_UPDATED, REALTIME_RESOURCES.MEDIA],
+      [AUDIT_ACTIONS.COLLECTION_CATEGORY_UPDATED, REALTIME_RESOURCES.COLLECTIONS],
+    ];
+
+    for (const [action, resource] of cases) {
+      expect(resourcesForAction(action), `${action} does not move ${resource}`).toContain(resource);
+    }
+  });
+
+  it('sends the visitor-facing ones to the public channel as well', () => {
+    // Toggling a menu item's visibility is the case that motivated this: it
+    // changes the navigation every anonymous visitor is looking at.
+    expect(publicChannelsForAction(AUDIT_ACTIONS.MENU_ITEM_UPDATED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.NAVIGATION,
+    );
+    expect(publicChannelsForAction(AUDIT_ACTIONS.FOOTER_LINK_UPDATED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.NAVIGATION,
+    );
+    expect(publicChannelsForAction(AUDIT_ACTIONS.BLOG_UPDATED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.CONTENT,
+    );
+    expect(publicChannelsForAction(AUDIT_ACTIONS.MODULE_UPDATED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.CATALOG,
+    );
+    expect(publicChannelsForAction(AUDIT_ACTIONS.INSTRUCTOR_UPDATED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.CATALOG,
+    );
+    // Metadata, but it is rendered into the page a visitor has open.
+    expect(publicChannelsForAction(AUDIT_ACTIONS.SEO_UPDATED)).toContain(
+      REALTIME_PUBLIC_CHANNELS.CONTENT,
+    );
   });
 
   it('treats every change as also moving the audit log and the dashboard', () => {
@@ -136,6 +198,13 @@ describe('public realtime channels', () => {
     // open page for a change nobody can see is worse than leaving it alone.
     expect(publicChannelsForAction('warehouse.restocked')).toEqual([]);
     expect(publicChannelsForAction('')).toEqual([]);
+  });
+
+  it('keeps the support inbox off the public feed entirely', () => {
+    // Clearing a contact message is staff work on staff-only data. Telling a
+    // visitor that the inbox moved would reveal something no public page shows,
+    // and would re-render every open page to show them nothing.
+    expect(publicChannelsForAction(AUDIT_ACTIONS.MESSAGE_HANDLED)).toEqual([]);
   });
 
   it('never repeats a channel, so one change refreshes a page once', () => {

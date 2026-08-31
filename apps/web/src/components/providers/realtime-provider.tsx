@@ -69,6 +69,10 @@ const ADMIN_QUERY_PREFIXES: Record<RealtimeResource, string[]> = {
   [REALTIME_RESOURCES.SETTINGS]: ['/admin/settings'],
   [REALTIME_RESOURCES.FEATURES]: ['/admin/features'],
   [REALTIME_RESOURCES.AUDIT]: ['/admin/audit-logs'],
+  // Both inboxes live on one screen and move for the same reason, so one
+  // resource invalidates both keys.
+  [REALTIME_RESOURCES.MESSAGES]: ['/admin/contact-messages', '/admin/newsletter-subscribers'],
+  [REALTIME_RESOURCES.SEO]: ['/admin/seo'],
   // The dashboard is a Server Component with no client cache to invalidate;
   // the route refresh below is what updates it.
   [REALTIME_RESOURCES.OVERVIEW]: [],
