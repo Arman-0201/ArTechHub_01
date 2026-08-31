@@ -13,6 +13,8 @@ import { buildPaginationMeta, toSkipTake } from '../../lib/http.js';
 import { hashPassword } from '../../lib/crypto.js';
 import { resolveMediaUrl } from '../media/media.helpers.js';
 import { computeLearningStats } from '../progress/progress.service.js';
+import { disconnectUser } from '../../realtime/hub.js';
+import { announceLearnerChange } from '../../realtime/events.js';
 
 const userSummarySelect = {
   id: true,
@@ -217,6 +219,9 @@ export async function updateUser(
       where: { userId: id, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    // The HTTP side is now closed to them by `tokenVersion`; the live feed is
+    // not, because a socket authenticates once and then runs to token expiry.
+    disconnectUser(id, 'Session revoked');
   }
 
   return toSummary(user);
@@ -265,6 +270,11 @@ export async function assignRoles(
       select: userSummarySelect,
     });
   });
+
+  // Their sockets were admitted under the old permission set. Closing makes the
+  // next handshake re-resolve it from the database, which is the same path the
+  // first one took.
+  disconnectUser(id, 'Permissions changed');
 
   return toSummary(user);
 }
@@ -332,6 +342,7 @@ export async function deleteUser(
       prisma.refreshToken.deleteMany({ where: { userId: id } }),
       prisma.verificationToken.deleteMany({ where: { userId: id } }),
     ]);
+    disconnectUser(id, 'Account closed');
     return { strategy };
   }
 
@@ -345,6 +356,7 @@ export async function deleteUser(
       data: { revokedAt: new Date() },
     }),
   ]);
+  disconnectUser(id, 'Account closed');
   return { strategy };
 }
 
@@ -418,6 +430,16 @@ export async function updateOwnProfile(
     select: userSummarySelect,
   });
 
+  /*
+   * The learner's other tabs, so a renamed profile or a new avatar reaches the
+   * header everywhere rather than only where it was typed.
+   *
+   * `profile` was declared in the contract and mapped in the browser from the
+   * beginning, but nothing ever sent it — a dead branch on both ends. This is
+   * the call it was waiting for.
+   */
+  announceLearnerChange(userId, ['profile']);
+
   return toSummary(user);
 }
 
@@ -442,6 +464,11 @@ export async function updatePreferences(
     },
     select: { locale: true, theme: true, emailNotifications: true, marketingOptIn: true },
   });
+
+  // Language and theme are the ones that matter here: changing either in one
+  // tab should not leave the others rendering in the old one.
+  announceLearnerChange(userId, ['profile']);
+
   return user;
 }
 

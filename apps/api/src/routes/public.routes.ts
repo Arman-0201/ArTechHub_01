@@ -36,7 +36,8 @@ import * as legalService from '../modules/legal/legal.service.js';
 import * as commerceService from '../modules/ecommerce/ecommerce.service.js';
 import { buildSitemapEntries, getSeoByRoute } from '../modules/seo/seo.service.js';
 import { getFeatureFlags, isFeatureEnabled } from '../modules/feature-flags/feature-flags.service.js';
-import { PERMISSIONS } from '@academy/types';
+import { PERMISSIONS, REALTIME_RESOURCES } from '@academy/types';
+import { announceVisitorActivity } from '../realtime/events.js';
 import { checkoutSchema } from '@academy/validation';
 
 /**
@@ -460,6 +461,11 @@ publicRouter.post(
     await prisma.contactMessage.create({
       data: { ...input, ipAddress: getClientIp(req) ?? null },
     });
+    // The inbox is only useful if it fills while someone is looking at it. No
+    // sender name or address travels with the event — an admin holding
+    // `settings.manage` is told the inbox moved and reads it through the
+    // endpoint that has always guarded it.
+    announceVisitorActivity([REALTIME_RESOURCES.MESSAGES]);
     ok(res, { message: 'Thanks for reaching out. We will reply shortly.' }, 201);
   }),
 );
@@ -477,6 +483,7 @@ publicRouter.post(
       // Re-subscribing clears a previous opt-out rather than erroring.
       update: { unsubscribedAt: null, locale: input.locale ?? req.locale },
     });
+    announceVisitorActivity([REALTIME_RESOURCES.MESSAGES]);
     ok(res, { message: 'You are on the list. Check your inbox to confirm.' }, 201);
   }),
 );

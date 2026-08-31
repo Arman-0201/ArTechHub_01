@@ -14,7 +14,8 @@ import { generateReference } from '../../lib/crypto.js';
 import { uniqueSlug } from '../../lib/slug.js';
 import { resolveMediaUrl } from '../media/media.helpers.js';
 import { toSeoDto, upsertSeo } from '../seo/seo.service.js';
-import { announceLearnerChange } from '../../realtime/events.js';
+import { REALTIME_RESOURCES } from '@academy/types';
+import { announceLearnerChange, announceVisitorActivity } from '../../realtime/events.js';
 
 /**
  * E-commerce module.
@@ -399,6 +400,18 @@ export async function createOrder(input: CheckoutInput): Promise<OrderDto> {
 
   // A guest checkout has no account to tell, and no order history to update.
   announceLearnerChange(input.userId, ['orders']);
+
+  /*
+   * The admins do get told, guest checkout included — an order is an order.
+   *
+   * This is the event the order screen exists for. Checkout runs on a public
+   * route with no audit entry behind it, so without this line a sale lands in
+   * the database and no open admin tab knows until someone reloads.
+   *
+   * `products` because the transaction above decremented stock, which the
+   * product list shows.
+   */
+  announceVisitorActivity([REALTIME_RESOURCES.ORDERS, REALTIME_RESOURCES.PRODUCTS]);
 
   return getOrderById(order.id);
 }

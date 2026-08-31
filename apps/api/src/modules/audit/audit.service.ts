@@ -60,6 +60,52 @@ export const AUDIT_ACTIONS = {
   ORDER_STATUS_CHANGED: 'order.status_changed',
   ENROLLMENT_CREATED: 'enrollment.created',
   ENROLLMENT_CANCELLED: 'enrollment.cancelled',
+  MESSAGE_HANDLED: 'message.handled',
+
+  /*
+   * Everything below closes a gap that was both an audit gap and a live-feed
+   * gap, because they are the same gap: `recordAudit` is the only hook either
+   * one has. A blog post could be deleted with no record of who did it, and no
+   * open screen — admin or public — ever heard about it.
+   *
+   * The action prefixes are chosen to match the maps in `realtime/events.ts`
+   * that already existed for them. Footer actions carry the `menu.` prefix
+   * deliberately: the footer *is* navigation, it shares the `menus` resource
+   * and the `navigation` public channel, and giving it a prefix of its own
+   * would mean maintaining a second entry that always had to agree with the
+   * first.
+   */
+  CATEGORY_REORDERED: 'category.reordered',
+  COURSE_RESTORED: 'course.restored',
+  MODULE_CREATED: 'module.created',
+  MODULE_UPDATED: 'module.updated',
+  MODULE_DELETED: 'module.deleted',
+  MODULE_REORDERED: 'module.reordered',
+  LESSON_REORDERED: 'lesson.reordered',
+  INSTRUCTOR_CREATED: 'instructor.created',
+  INSTRUCTOR_UPDATED: 'instructor.updated',
+  INSTRUCTOR_DELETED: 'instructor.deleted',
+  SECTION_DUPLICATED: 'section.duplicated',
+  MENU_CREATED: 'menu.created',
+  MENU_ITEM_CREATED: 'menu.item_created',
+  MENU_ITEM_UPDATED: 'menu.item_updated',
+  MENU_ITEM_DELETED: 'menu.item_deleted',
+  FOOTER_GROUP_CREATED: 'menu.footer_group_created',
+  FOOTER_GROUP_UPDATED: 'menu.footer_group_updated',
+  FOOTER_GROUP_DELETED: 'menu.footer_group_deleted',
+  FOOTER_LINK_CREATED: 'menu.footer_link_created',
+  FOOTER_LINK_UPDATED: 'menu.footer_link_updated',
+  FOOTER_LINK_DELETED: 'menu.footer_link_deleted',
+  MEDIA_UPDATED: 'media.updated',
+  BLOG_CREATED: 'blog.created',
+  BLOG_UPDATED: 'blog.updated',
+  BLOG_DELETED: 'blog.deleted',
+  COLLECTION_CATEGORY_UPDATED: 'collection.category_updated',
+  COLLECTION_CATEGORY_DELETED: 'collection.category_deleted',
+  COLLECTION_ENTRIES_REORDERED: 'collection.entries_reordered',
+  LEGAL_CREATED: 'legal.created',
+  LEGAL_UPDATED: 'legal.updated',
+  SEO_UPDATED: 'seo.updated',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

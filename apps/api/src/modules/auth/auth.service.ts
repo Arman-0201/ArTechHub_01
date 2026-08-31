@@ -34,6 +34,7 @@ import {
 } from '../../lib/mailer.js';
 import { resolveMediaUrl } from '../media/media.helpers.js';
 import { getSettings } from '../settings/settings.service.js';
+import { disconnectUser } from '../../realtime/hub.js';
 import * as repository from './auth.repository.js';
 import type { SessionUserRow } from './auth.repository.js';
 
@@ -338,6 +339,7 @@ export async function refreshSession(
       where: { id: stored.userId },
       data: { tokenVersion: { increment: 1 } },
     });
+    disconnectUser(stored.userId, 'Session revoked');
     logSecurityEvent('auth.refresh.reuse_detected', {
       userId: stored.userId,
       familyId: stored.familyId,
@@ -416,6 +418,9 @@ export async function logout(presentedToken: string | null): Promise<void> {
 export async function logoutEverywhere(userId: string): Promise<void> {
   await repository.revokeAllUserRefreshTokens(userId);
   await prisma.user.update({ where: { id: userId }, data: { tokenVersion: { increment: 1 } } });
+  // "Everywhere" has to include the live feed, or the one thing still running
+  // after a panicked sign-out-everywhere is the socket.
+  disconnectUser(userId, 'Signed out everywhere');
   logSecurityEvent('auth.logout', { userId, scope: 'all' });
 }
 
@@ -513,6 +518,10 @@ export async function resetPassword(token: string, newPassword: string): Promise
     }),
   ]);
 
+  // Whoever reset the password owns the account now, so the sockets opened by
+  // whoever held it before must go with the sessions.
+  disconnectUser(record.userId, 'Password reset');
+
   logSecurityEvent('auth.password.reset_completed', { userId: record.userId });
 }
 
@@ -549,6 +558,8 @@ export async function changePassword(
       data: { revokedAt: new Date() },
     }),
   ]);
+
+  disconnectUser(userId, 'Password changed');
 
   logSecurityEvent('auth.password.changed', { userId });
 }

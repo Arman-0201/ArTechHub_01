@@ -97,6 +97,24 @@ export const REALTIME_RESOURCES = {
   FEATURES: 'features',
   AUDIT: 'audit',
   OVERVIEW: 'overview',
+  /**
+   * The support inboxes: contact messages and newsletter subscribers.
+   *
+   * The only resource here fed entirely by *visitors* rather than by
+   * administrators, which is why it exists as its own entry rather than riding
+   * on `settings`. Nobody audits a contact form submission, so without this the
+   * inbox would be the one admin screen that never updates itself.
+   */
+  MESSAGES: 'messages',
+  /**
+   * Per-route SEO metadata.
+   *
+   * Its own resource rather than part of `pages`, because it is its own screen
+   * behind its own permission: an editor who may rewrite a page's body may not
+   * be trusted with its canonical URL, and neither should be told the other's
+   * screen moved.
+   */
+  SEO: 'seo',
 } as const;
 
 export type RealtimeResource = (typeof REALTIME_RESOURCES)[keyof typeof REALTIME_RESOURCES];
@@ -122,6 +140,11 @@ export const REALTIME_RESOURCE_PERMISSION: Record<RealtimeResource, Permission> 
   [REALTIME_RESOURCES.FEATURES]: PERMISSIONS.FEATURES_MANAGE,
   [REALTIME_RESOURCES.AUDIT]: PERMISSIONS.AUDIT_READ,
   [REALTIME_RESOURCES.OVERVIEW]: PERMISSIONS.ANALYTICS_READ,
+  // Deliberately the same permission that guards `GET /admin/contact-messages`
+  // and `/admin/newsletter-subscribers`. A socket must never be told about a
+  // screen its holder could not open, so these two are one decision, not two.
+  [REALTIME_RESOURCES.MESSAGES]: PERMISSIONS.SETTINGS_MANAGE,
+  [REALTIME_RESOURCES.SEO]: PERMISSIONS.SEO_MANAGE,
 };
 
 /* --------------------------------------------------------------- public */

@@ -11,6 +11,7 @@ import {
   FileText,
   FolderTree,
   Image as ImageIcon,
+  Inbox,
   Languages,
   LayoutDashboard,
   Menu as MenuIcon,
@@ -138,6 +139,14 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Features',
         Icon: ToggleLeft,
         permission: PERMISSIONS.FEATURES_MANAGE,
+      },
+      {
+        href: '/admin/messages',
+        label: 'Inbox',
+        Icon: Inbox,
+        // The same permission that guards both inbox endpoints, so the link is
+        // shown to exactly the people whose requests would succeed.
+        permission: PERMISSIONS.SETTINGS_MANAGE,
       },
       {
         href: '/admin/settings',

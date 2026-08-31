@@ -43,6 +43,11 @@ const RESOURCES_BY_ACTION_PREFIX: Record<string, RealtimeResource[]> = {
   translations: [REALTIME_RESOURCES.LANGUAGES],
   settings: [REALTIME_RESOURCES.SETTINGS],
   feature: [REALTIME_RESOURCES.FEATURES],
+  // Marking a contact message handled *is* an administrative act, so unlike the
+  // arrival of the message itself it belongs on the audit trail — and reaches
+  // the other admins reading the same inbox through this map.
+  message: [REALTIME_RESOURCES.MESSAGES],
+  seo: [REALTIME_RESOURCES.SEO],
 };
 
 /**
@@ -94,6 +99,9 @@ const PUBLIC_CHANNELS_BY_ACTION_PREFIX: Record<string, RealtimePublicChannel[]> 
   // switch that puts the whole site into maintenance.
   settings: [REALTIME_PUBLIC_CHANNELS.NAVIGATION, REALTIME_PUBLIC_CHANNELS.PLATFORM],
   feature: [REALTIME_PUBLIC_CHANNELS.PLATFORM],
+  // Metadata rather than body copy, but it is rendered into the page a visitor
+  // is looking at, so the page they are on is genuinely out of date.
+  seo: [REALTIME_PUBLIC_CHANNELS.CONTENT],
 };
 
 export function publicChannelsForAction(action: string): RealtimePublicChannel[] {
@@ -129,6 +137,43 @@ export function announceAuditedChange(change: AuditedChange): void {
   });
 
   broadcastPublic(publicChannelsForAction(change.action));
+}
+
+/**
+ * Announces something a *visitor* did, to the admins entitled to see it.
+ *
+ * The counterpart to `announceAuditedChange`. That one carries deliberate
+ * administrative changes — the things admins do to each other's screens. This
+ * one carries the activity an administrator is actually watching for: someone
+ * enrolled, someone bought something, someone wrote in.
+ *
+ * Not derived from the audit trail, and deliberately not added to it. The audit
+ * log is the record of who exercised authority over the platform; filling it
+ * with visitor traffic would destroy that meaning and bury the entries that
+ * matter under thousands that do not. So this reaches the live feed without
+ * touching the log.
+ *
+ * No actor and no target id, for the same reason the public channels carry
+ * none: the recipient learns that a list moved and refetches it through the
+ * endpoint it always used, which is already scoped to what they may read. That
+ * keeps this on the right side of "events name, they do not carry" — a learner
+ * completing a lesson does not leak that learner's identity to every admin with
+ * a dashboard open.
+ *
+ * Callers must not use this for changes that already pass through `recordAudit`
+ * — an admin granting an enrollment is announced there, and announcing it twice
+ * only costs a duplicate broadcast.
+ */
+export function announceVisitorActivity(resources: RealtimeResource[]): void {
+  // The dashboard counters move with every one of these, which is most of the
+  // point: enrollments, revenue and signups are exactly the numbers that come
+  // from visitor traffic rather than from administrators.
+  broadcastChange({
+    resources: [...new Set([...resources, REALTIME_RESOURCES.OVERVIEW])],
+    action: 'activity',
+    targetType: null,
+    targetId: null,
+  });
 }
 
 /**
